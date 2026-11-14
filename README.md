@@ -7,9 +7,31 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > **Fork: remote race engineer.** This fork (`remote-engineer` branch) is
 > turning Pitwall into a remote pitwall for endurance teams: a bridge on each
 > driver's PC, reached over Tailscale, with a hub for the engineer that follows
-> whoever is driving. Work in progress. See
-> [docs/analisi-fase1.md](docs/analisi-fase1.md) (analysis and plan, Italian)
-> and [docs/lmu-api.md](docs/lmu-api.md) (LMU REST API and shared memory notes).
+> whoever is driving. Work in progress.
+>
+> | Phase | Status |
+> |---|---|
+> | 1. Analysis of the code and of LMU's data sources | done: [docs/analisi-fase1.md](docs/analisi-fase1.md) (Italian), [docs/lmu-api.md](docs/lmu-api.md) |
+> | 2. Remote access: token, reconnects, no shutdown mid-race | done: [docs/accesso-remoto.md](docs/accesso-remoto.md) (Italian) |
+> | 3. Multi-driver hub | next |
+> | 4–8. Strategy engine, timing, history, AI comments, driver coaching | planned |
+
+## Remote access
+
+Anyone on the racing PC itself uses the dashboard as before. From another
+machine the bridge asks for an **access token**, generated on first run:
+
+1. On the racing PC, click **🔗** in the toolbar and copy the link
+   (`http://<address>:9000/?token=…`). With [Tailscale](https://tailscale.com)
+   running, the panel offers a link that works from outside the home network.
+2. Open the link on the other device. The browser remembers the token.
+
+Remote clients can watch but not control the racing PC: shutting the bridge
+down, changing its port and installing voices only work locally. The bridge
+stays up for as long as the game is running, and exits after 10 minutes with
+no client and no game (`--keep-alive` disables that). Details and
+troubleshooting: [docs/accesso-remoto.md](docs/accesso-remoto.md); wire
+protocol: [shared/protocol.md](shared/protocol.md).
 
 ## Install
 
@@ -87,13 +109,14 @@ lmu-pitwall.exe (Rust, single binary)
     ├── Upgrade: websocket  → WebSocket handler (live telemetry)
     ├── GET /              → index.html  (React SPA entry)
     ├── GET /assets/*      → hashed JS/CSS bundles (immutable cache)
-    ├── GET /api/network-info
+    ├── GET /api/network-info   (token)
+    ├── GET /api/auth-check
     ├── GET /api/version
-    └── POST /api/shutdown
+    └── POST /api/shutdown      (racing PC only)
 
-Browser (any device on LAN)
-├── ws://<ip>:9000   live telemetry stream
-└── http://<ip>:9000  React SPA (served from embedded rust-embed assets)
+Browser (racing PC, LAN, or Tailscale)
+├── ws://<ip>:9000/?token=…   live telemetry stream (no token needed on the racing PC)
+└── http://<ip>:9000           React SPA (served from embedded rust-embed assets)
 ```
 
 A single port handles both WebSocket upgrades and static file serving. The React bundle is embedded in the binary via `rust-embed` — no separate file deployment needed.
@@ -144,6 +167,21 @@ sudo dnf install wine
 ```
 
 After that, `release.sh` automatically builds both the standalone `.exe` and the installer.
+
+**Building on Windows (no cross-compilation):**
+
+Needs [rustup](https://rustup.rs) with the default MSVC toolchain, the Visual
+Studio Build Tools (C++ workload) and Node.js.
+
+```powershell
+cd dashboard; npm ci; npm run build; cd ..
+cd bridge; cargo test; cargo build --release
+# -> bridge\target\release\lmu-pitwall.exe (dashboard embedded)
+```
+
+Build the dashboard first: the bridge embeds `dashboard/dist` at compile time.
+Without Zig the icon embedding step is skipped with a warning; the binary
+works, it just has no icon.
 
 ## Tech Stack
 

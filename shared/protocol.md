@@ -6,6 +6,36 @@
 - **Format:** MessagePack (binary, compact)
 - **Debug mode:** JSON via query param `?format=json`
 
+## Access
+
+The bridge sorts callers by where the TCP connection comes from:
+
+| Caller | Token | May do |
+|---|---|---|
+| **Local**: loopback (a browser on the racing PC) | not needed | everything |
+| **Remote**: any other address (LAN, Tailscale) | required | receive data, send read-only commands |
+
+- WebSocket: `ws://HOST:9000/?token=TOKEN`. Without a valid token the
+  handshake is refused with HTTP 401.
+- HTTP API: `?token=TOKEN` or `Authorization: Bearer TOKEN`.
+- Local-only WebSocket commands: `engineer_install_piper`,
+  `engineer_install_voice`, `engineer_uninstall_voice`, and `post_race_init`
+  with a custom `results_path`. A remote client gets `EngineerError` or
+  `PostRaceError` back.
+- The token is generated on first run and stored in
+  `%APPDATA%\LMUPitwall\config.json`; `--token` and `LMU_PITWALL_TOKEN` override it.
+
+### HTTP API
+
+| Endpoint | Access | Returns |
+|---|---|---|
+| `GET /` and static assets | anyone | the dashboard |
+| `GET /api/version` | anyone | `{version}` |
+| `GET /api/auth-check` | anyone | 200 `{ok, local}` or 401. Lets a client tell a refused token from an unreachable bridge |
+| `GET /api/network-info` | local or remote | `{ip, port, local}`; local callers also get `tailscale_ip` and `token` |
+| `POST /api/shutdown` | local, no foreign `Origin` | exits the bridge |
+| `POST /api/set-port` | local, no foreign `Origin` | saves the port and restarts |
+
 ## Message Types
 
 All messages are tagged with a `type` field.
@@ -69,6 +99,16 @@ Sent when LMU connects or disconnects, and whenever `telemetry_valid` changes.
 | `plugin_version` | string | LMU's build number as `1.4.0.0`; `unknown` if unreadable. Named for the plugin era, when it carried a third-party DLL's version |
 | `telemetry_valid` | bool | `false` = shared-memory layout drift detected |
 | `telemetry_warning` | string \| null | reason, only set when `telemetry_valid` is `false` |
+| `session_active` | bool | `true` while a session is loaded and live |
+
+`session_active` is `false` in the menus, **including after leaving a
+session**: LMU keeps the last session's cars in shared memory, and the bridge
+tells a finished session from a live one by the `SME_UNLOAD` event. While it is
+`false` the bridge sends no `TelemetryUpdate` or `ScoringUpdate`, and clients
+must clear what they were showing.
+
+Sent on connect in every case, so a client always knows the state: before the
+game starts it reads `game_connected: false`.
 
 `telemetry_valid` goes `false` when the per-wheel block fails a plausibility
 check, which means a game update moved the wheel block inside
@@ -78,3 +118,15 @@ Consumers must treat the tire block in `Telemetry` as unusable while
 `telemetry_valid` is `false` — the bridge keeps sending it rather than dropping
 fields, so the flag is the only signal. In this repo: `TireMonitor` greys the
 cells out, and the race engineer's tire rules stay silent.
+
+### `Heartbeat` (every 2 s)
+
+| Field | Type | Notes |
+|---|---|---|
+| `server_time_ms` | u64 | bridge wall clock, Unix milliseconds |
+
+Sent to every client whether or not the game is running, together with a
+WebSocket ping. Outside a session the bridge has nothing else to say, so this
+is what lets a client tell a quiet bridge from a dead link: the dashboard
+drops a socket that has been silent for 7 s. In the other direction, the
+bridge drops a client that has sent nothing (not even a pong) for 20 s.
