@@ -18,6 +18,7 @@ mod race_engineer;
 mod recording;
 mod rest_api;
 mod shared_memory;
+mod tyres;
 mod websocket;
 
 use std::sync::Arc;
@@ -60,6 +61,8 @@ struct TelemetryState {
     wearables: garage_api::WearablesSnapshot,
     /// Latest weather forecast nodes from /rest/sessions/weather REST API.
     weather_forecast: Vec<garage_api::WeatherForecastNode>,
+    /// Per-wheel lock-up tally for the tyres currently fitted.
+    lockups: [tyres::LockupStats; 4],
 }
 
 impl TelemetryState {
@@ -73,6 +76,7 @@ impl TelemetryState {
             ve_available: None,
             wearables: garage_api::WearablesSnapshot::default(),
             weather_forecast: Vec::new(),
+            lockups: Default::default(),
         }
     }
 }
@@ -108,6 +112,7 @@ fn build_telemetry_update(
     fuel: &FuelSnapshot,
     ve_history: Option<Vec<f64>>,
     ve_available: Option<bool>,
+    lockups: &[tyres::LockupStats; 4],
 ) -> Option<ServerMessage> {
     let veh = tel
         .player()
@@ -164,6 +169,14 @@ fn build_telemetry_update(
             pressure:     veh.mWheels[i].mPressure,
             wear:       veh.mWheels[i].mWear,
             brake_temp: veh.mWheels[i].mBrakeTemp - 273.15,
+            flat:         veh.mWheels[i].mFlat != 0,
+            detached:     veh.mWheels[i].mDetached != 0,
+            optimal_temp: tyres::optimal_temp_c(veh.mWheels[i].mOptimalTemp),
+            surface:      veh.mWheels[i].mSurfaceType,
+            lockups:          lockups[i].count,
+            lockup_total_s:   lockups[i].total_s,
+            lockup_longest_s: lockups[i].longest_s,
+            locked:           lockups[i].locked_now,
         }),
         position:    Vec3 { x: veh.mPos.x,      y: veh.mPos.y,      z: veh.mPos.z },
         velocity:    Vec3 { x: lv.x,             y: lv.y,            z: lv.z },
@@ -286,6 +299,11 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
                 time_behind_leader: v.mTimeBehindLeader,
                 laps_behind_leader: v.mLapsBehindLeader,
                 virtual_energy: entry.map(|(ve, _)| *ve).unwrap_or(0.0),
+                control:          v.mControl,
+                time_behind_next: v.mTimeBehindNext,
+                laps_behind_next: v.mLapsBehindNext,
+                num_pitstops:     v.mNumPitstops as i32,
+                pit_state:        v.mPitState,
             }
         })
         .collect();
@@ -296,6 +314,8 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
         num_vehicles:      info.mNumVehicles,
         vehicles,
         player_vehicle_id: player_id,
+        in_realtime:       info.mInRealtime != 0,
+        player_name:       bytes_to_str(&info.mPlayerName).to_string(),
     };
     (msg, player_id)
 }
@@ -532,6 +552,8 @@ async fn task_polling(
     let mut was_connected = false;
     // Whether a session is loaded and live (see the ghost-session guard below).
     let mut session_active = false;
+    // Wheel lock-ups of the player's car, sampled at the polling rate.
+    let mut lockups = tyres::LockupTracker::new();
 
     // Plugin version string, read from shared memory on connect.
     // Reported to the dashboard as `plugin_version` for protocol compatibility;
@@ -621,7 +643,9 @@ async fn task_polling(
                         info!("Session loaded — streaming");
                     } else {
                         info!("Session unloaded — dropping its data");
+                        lockups.reset();
                         let mut s = state.write().await;
+                        s.lockups = Default::default();
                         s.telemetry = None;
                         s.scoring = None;
                         s.ve_history = None;
@@ -746,7 +770,12 @@ async fn task_polling(
                     }
                 }
 
+                if let Some(player) = tel.as_ref().and_then(|t| t.player()) {
+                    lockups.update(player);
+                }
+
                 let mut s = state.write().await;
+                s.lockups = lockups.stats();
                 if tel.is_some() {
                     s.telemetry = tel;
                 }
@@ -1013,7 +1042,7 @@ async fn task_broadcaster(
             }
 
             let tel_msg = if send_tel {
-                s.telemetry.as_ref().and_then(|t| build_telemetry_update(t, player_id, &fuel_snapshot, s.ve_history.clone(), s.ve_available))
+                s.telemetry.as_ref().and_then(|t| build_telemetry_update(t, player_id, &fuel_snapshot, s.ve_history.clone(), s.ve_available, &s.lockups))
             } else {
                 None
             };

@@ -20,6 +20,30 @@ pub struct TireData {
     pub pressure: f64,
     pub wear: f64,
     pub brake_temp: f64,
+    /// Punctured (`mFlat`).
+    #[serde(default)]
+    pub flat: bool,
+    /// Wheel gone (`mDetached`).
+    #[serde(default)]
+    pub detached: bool,
+    /// The compound's optimal temperature, °C; `None` if the game gives none.
+    #[serde(default)]
+    pub optimal_temp: Option<f64>,
+    /// What the wheel is on: 0=dry,1=wet,2=grass,3=dirt,4=gravel,5=kerb,6=special.
+    #[serde(default)]
+    pub surface: u8,
+    /// Lock-ups since this tyre was fitted (see `crate::tyres`): how many,
+    /// total seconds locked, longest single one, and whether locked right now.
+    /// The basis for the dashboard's flat-spot hint; LMU publishes no flat
+    /// spots as such.
+    #[serde(default)]
+    pub lockups: u32,
+    #[serde(default)]
+    pub lockup_total_s: f64,
+    #[serde(default)]
+    pub lockup_longest_s: f64,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +165,24 @@ pub struct VehicleScoring {
     pub laps_behind_leader: i32, // mLapsBehindLeader; 0 = on lead lap
     // Virtual Energy (0.0 = no VE / not a hybrid; >0 = fraction 0.0–1.0)
     pub virtual_energy: f32,
+    /// Who is at the wheel (`mControl`): -1 nobody, 0 the local player,
+    /// 1 local AI (also the player's own car while parked in the garage),
+    /// 2 a remote player, 3 replay. On the player's row, 0 means "this PC is
+    /// driving the car right now" — what the hub uses to follow the driver.
+    #[serde(default)]
+    pub control: i8,
+    /// Gap to the car one position ahead (`mTimeBehindNext`, seconds) and laps
+    /// between them. Race sessions only; 0 for the leader.
+    #[serde(default)]
+    pub time_behind_next: f64,
+    #[serde(default)]
+    pub laps_behind_next: i32,
+    /// Pit stops made (`mNumPitstops`).
+    #[serde(default)]
+    pub num_pitstops: i32,
+    /// `mPitState`: 0 none, 1 request, 2 entering, 3 stopped, 4 exiting.
+    #[serde(default)]
+    pub pit_state: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +236,12 @@ pub enum ServerMessage {
         num_vehicles: i32,
         vehicles: Vec<VehicleScoring>,
         player_vehicle_id: i32,
+        /// `mInRealtime`: the local player is in the car, not at the monitor.
+        #[serde(default)]
+        in_realtime: bool,
+        /// `mPlayerName`: who is playing on this PC.
+        #[serde(default)]
+        player_name: String,
     },
 
     /// Low frequency: ~1Hz
