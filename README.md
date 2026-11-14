@@ -4,6 +4,13 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 
 ![LMU Pitwall Dashboard](docs/screenshots/Full.png)
 
+> **Fork: remote race engineer.** This fork (`remote-engineer` branch) is
+> turning Pitwall into a remote pitwall for endurance teams: a bridge on each
+> driver's PC, reached over Tailscale, with a hub for the engineer that follows
+> whoever is driving. Work in progress. See
+> [docs/analisi-fase1.md](docs/analisi-fase1.md) (analysis and plan, Italian)
+> and [docs/lmu-api.md](docs/lmu-api.md) (LMU REST API and shared memory notes).
+
 ## Install
 
 Download `LMU-Pitwall-Setup-X.X.X.exe` from the [latest release](https://github.com/Swizzjack/lmu-pitwall/releases), run the installer, start Le Mans Ultimate, then open the dashboard in any browser:
