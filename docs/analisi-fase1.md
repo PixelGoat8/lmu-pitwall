@@ -66,15 +66,20 @@ Misurate il 2026-11-14 su LMU 1.4.2, in una sessione offline di prove a Monza
    - non pubblicati (sempre 0): temperature e pressioni gomme, elettronica
      (TC, ABS, mappa).
 
-   **Attenzione:** l'autore upstream ha misurato online carburante fisso a metà
-   serbatoio e usura fissa a 1.0 per le altre auto. Online il gioco pubblica
-   quindi meno dati. Va rimisurato in una sessione online.
+   **Online è diverso** (misurato su un server LMP3, 13 auto guidate da
+   persone, osservate dal monitor): restano reali pedali, sterzo, marcia, giri
+   e velocità, ma carburante (50.0 su tutte), usura gomme (1.0 su tutte) e
+   temperatura freni (ferma a quella ambiente) sono valori fissi.
 2. **Da spettatore/engineer vedo la telemetria della macchina del team?**
-   **Non ancora verificato**: serve una sessione online. Due indizi:
-   - offline la telemetria delle altre auto c'è, quindi non è escluso;
-   - online upstream ha visto valori fissi per carburante e usura delle altre auto.
+   Per un'auto di cui non sono pilota: **no**, non abbastanza. Dal monitor
+   online vedo pedali e passo di qualsiasi auto, ma non carburante, usura,
+   temperature gomme e freni, né elettronica. Anche la REST (`RepairAndRefuel`,
+   stima della sosta, carburante e gomme in `/rest/strategy/usage`) descrive
+   solo la mia auto. **Il bridge sul PC di chi guida resta necessario.**
 
-   Finché non è misurato, il progetto assume che serva il bridge sul PC di chi guida.
+   Resta un caso non misurato: l'auto condivisa in un evento a squadre, dove
+   sono iscritto sulla stessa auto del pilota. Lì il gioco potrebbe darmi i
+   dati completi. Serve una prova con un compagno.
 3. **Meteo e VE dove?**
    - Meteo attuale: shared memory (scoring), e anche REST `RepairAndRefuel.currentWeather`.
    - Previsione (5 nodi): solo REST, `/rest/sessions/weather`.
@@ -132,7 +137,7 @@ Build Tools 2022 (C++). La build upstream è pensata per Linux
 
 ## Ancora da verificare con il gioco
 
-1. Sessione online: dati delle altre auto (carburante, usura, pedali).
+1. Auto condivisa in un evento a squadre: cosa vede chi è iscritto sulla stessa auto del pilota.
 2. Spettatore/engineer: telemetria e REST dell'auto del team.
 3. Cambio pilota: `mControl`, `mIsPlayer` e chiave di `/rest/strategy/usage`.
 4. Pioggia e previsione con meteo accelerato.

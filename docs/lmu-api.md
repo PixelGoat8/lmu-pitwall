@@ -4,7 +4,8 @@
 > 25661166), 2026-11-14, in an offline practice session at Monza: 37 cars
 > (Hypercar, LMP2, GTE), player in a Hypercar, 3 laps driven.
 > Tools: `tools/rest-probe`, `tools/lmu-probe`, `tools/layout-check`.
-> **Not measured yet:** online sessions, spectator mode, rain, races.
+> Online: an LMP3 server, 14 cars, watched from the monitor.
+> **Not measured yet:** a shared team car, driver swaps, rain, races.
 > Re-run the tools after each game update.
 
 ## REST API — `http://localhost:6397`
@@ -132,22 +133,37 @@ plausible (71 proven live, 19 legal zeros, 0 failing).
 Units confirmed: tyre and brake temperatures are Kelvin; fuel is litres.
 Torn reads with plain polling: 0 of 4207 snapshots in a stable field.
 
-### What other cars' telemetry rows contain (offline, AI cars)
+### What other cars' telemetry rows contain
 
-Measured on 36 AI cars mid-lap. **Online may differ**: upstream measured
-`mFuel` stuck at half a tank and `mWear` at 1.0 for other cars in online
-sessions. Both must be re-measured online.
+Two measurements: 36 AI cars offline (Monza), and 13 human-driven cars online
+(LMP3 server, watched from the monitor with our own car parked in the garage,
+30 s at ~13 Hz). Online the game hides the consumables.
 
-| Field | Other cars (offline AI) |
-|---|---|
-| Position, velocity, `mElapsedTime`, lap number | real |
-| Throttle, brake, steering, gear, RPM | **real** |
-| `mFuel` | **real**, changes per lap |
-| `mWheels[].mWear` | **real**, changes per lap |
-| `mWheels[].mBrakeTemp` | **real** (300–760 °C seen under braking) |
-| `mVirtualEnergy`, `mBatteryChargeFraction` | real for Hypercars; 0 for LMP2 and GTE |
-| Tyre surface and carcass temperature, tyre pressure | **not published** (0) |
-| TC, ABS, motor map and other electronics | **not published** (0) |
+| Field | Offline, AI cars | Online, remote cars |
+|---|---|---|
+| Position, velocity, `mElapsedTime`, lap number | real | real |
+| Throttle, brake, steering, gear, RPM | **real** | **real** |
+| `mFuel` | real, changes per lap | **placeholder**: 50.0 on every car |
+| `mWheels[].mWear` | real, changes per lap | **placeholder**: 1.0 on every car |
+| `mWheels[].mBrakeTemp` | real (300–760 °C under braking) | **placeholder**: ambient, never moves |
+| `mVirtualEnergy`, `mBatteryChargeFraction` | real for Hypercars; 0 for LMP2 and GTE | 0 here (LMP3 has no VE). Upstream reports VE is real online for VE classes; *to verify* |
+| Tyre surface and carcass temperature, tyre pressure | not published (0) | not published (0) |
+| TC, ABS, motor map and other electronics | not published (0) | not published (0) |
+
+Online, `mControl` is 2 (remote) for every other car. Our own parked car had
+`mIsPlayer` = 1 and `mControl` = 1, and `playerHasVehicle` was 1.
+
+REST online, from the monitor: every endpoint answers, but
+`RepairAndRefuel`, `pitstop-estimate` and the garage data describe **our own
+car only**. `/rest/strategy/usage` lists all 14 drivers with `lap`, `stint`,
+`pit`, `ve`; `fuel` and `tyres` appear only on our own entry.
+
+**Consequence:** watching from another PC gives the pedals and pace of any
+car, but not its fuel, tyre wear, tyre or brake temperatures, or electronics.
+Those need a bridge on the PC of whoever is driving.
+
+**Not measured:** a shared car in a team event, where the engineer is entered
+on the same car as the driver. That needs a session with a teammate.
 
 The own car's tyre temperatures and pressures also read 0 while the car sits
 in the garage; they are live only on track.
@@ -203,7 +219,7 @@ game's writer, so the copy under it must stay short.
 
 ## Still to verify
 
-1. **Online session:** other cars' fuel, wear, pedals and brake temperatures.
+1. **Shared team car:** what the engineer sees when entered on the same car as the driver.
 2. **Spectator / engineer:** `playerHasVehicle`, `playerVehicleIdx`, the team
    car's telemetry row, and whether the REST garage endpoints answer for the
    team car.
