@@ -204,6 +204,7 @@ export interface SessionInfo {
   weather: WeatherData
   session_laps: number
   session_minutes: number
+  time_remaining?: number | null
 }
 
 export interface ElectronicsUpdate {
@@ -340,6 +341,8 @@ export interface HubError {
   message: string
 }
 
+import type { PitInfoMsg, StrategyUpdate } from './strategy'
+
 export type ServerMessage =
   | TelemetryUpdate
   | ScoringUpdate
@@ -353,3 +356,5 @@ export type ServerMessage =
   | HubStatus
   | HubStints
   | HubError
+  | StrategyUpdate
+  | PitInfoMsg

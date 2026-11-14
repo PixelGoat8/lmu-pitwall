@@ -10,6 +10,7 @@ import Standings from './widgets/Standings'
 import BattleWidget from './widgets/BattleWidget'
 import GapWidget from './widgets/GapWidget'
 import TeamWidget from './widgets/TeamWidget'
+import StrategyWidget from './widgets/StrategyWidget'
 import SessionInfo from './widgets/SessionInfo'
 import WeatherWidget from './widgets/WeatherWidget'
 import ConnectionStatus from './widgets/ConnectionStatus'
@@ -99,6 +100,13 @@ export const WIDGET_REGISTRY: Record<string, WidgetMeta> = {
     component: GapWidget,
     defaultSize: { w: 4, h: 3 },
     minSize: { w: 3, h: 2 },
+  },
+  StrategyWidget: {
+    id: 'StrategyWidget',
+    name: 'Strategy',
+    component: StrategyWidget,
+    defaultSize: { w: 6, h: 9 },
+    minSize: { w: 4, h: 4 },
   },
   TeamWidget: {
     id: 'TeamWidget',

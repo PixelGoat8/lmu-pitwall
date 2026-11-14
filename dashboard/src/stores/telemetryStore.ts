@@ -12,6 +12,7 @@ import type {
 } from '../types/telemetry'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import type { HubStatus, HubStintInfo } from '../types/telemetry'
+import type { StrategyUpdate } from '../types/strategy'
 
 // ---------------------------------------------------------------------------
 // Lap history
@@ -137,6 +138,8 @@ interface TelemetryStore {
   connection: ConnectionSection
   versionInfo: VersionInfoSection
   hub: HubSection
+  // Latest plan from the bridge's strategy engine; null outside a session.
+  strategy: StrategyUpdate | null
   lapHistory: LapEntry[]
   weatherHistory: WeatherSnapshot[]
   _lapTracking: { prevTotalLaps: number; prevPlayerId: number }
@@ -304,6 +307,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   connection: defaultConnection,
   versionInfo: null,
   hub: { status: null, stints: [], error: null },
+  strategy: null,
   lapHistory: [],
   weatherHistory: [],
   _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
@@ -519,6 +523,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
             session: defaultSession,
             electronics: defaultElectronics,
             vehicleStatus: defaultVehicleStatus,
+            strategy: null,
           }),
         }))
         break
@@ -533,6 +538,10 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
             lastUpdated: Date.now(),
           },
         })
+        break
+
+      case 'StrategyUpdate':
+        set({ strategy: msg })
         break
 
       case 'HubStatus':

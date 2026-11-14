@@ -97,6 +97,8 @@ const ENDURANCE_WIDGETS: WidgetConfig[] = [
   { id: 'weather-1',    widgetType: 'WeatherWidget' },
   { id: 'session-1',    widgetType: 'SessionInfo' },
   { id: 'lap-1',        widgetType: 'LapTiming' },
+  { id: 'strategy-1',   widgetType: 'StrategyWidget' },
+  { id: 'gaps-1',       widgetType: 'GapWidget' },
 ]
 
 const ENDURANCE_LG = [
@@ -109,6 +111,8 @@ const ENDURANCE_LG = [
   { i: 'standings-1',  x: 6,  y: 4, w: 6, h: 5, minW: 4, minH: 3 },
   { i: 'session-1',    x: 0,  y: 9, w: 5, h: 3, minW: 3, minH: 2 },
   { i: 'weather-1',    x: 5,  y: 9, w: 3, h: 3, minW: 2, minH: 2 },
+  { i: 'gaps-1',       x: 8,  y: 9, w: 4, h: 3, minW: 3, minH: 2 },
+  { i: 'strategy-1',   x: 0,  y: 12, w: 12, h: 8, minW: 4, minH: 4 },
 ]
 
 // Stream: minimal — Gear, Speed, RPM, Lap for overlay/stream use
