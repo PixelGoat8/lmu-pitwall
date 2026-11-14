@@ -34,5 +34,8 @@ int main() {
     OFF(TelemInfoV01, mWheel);
     OFF(VehicleScoringInfoV01, mControl);
     OFF(ScoringInfoV01, mAvgPathWetness);
+    OFF(ScoringInfoV01, mNumVehicles);
+    OFF(ScoringInfoV01, mInRealtime);
+    OFF(ScoringInfoV01, mGamePhase);
     return 0;
 }
