@@ -1,12 +1,11 @@
 # LMU data sources: REST API (:6397) and `LMU_Data` shared memory
 
-> **Status: draft, not yet verified against a running game.**
-> Everything below comes from code that already works against LMU: this
-> repo's bridge (`bridge/src/garage_api.rs`, `bridge/src/shared_memory/`) and
-> TinyPedal (`tinypedal/adapter/lmu_restapi.py`). No response has been captured
-> here yet. Each entry says where it comes from. Run
-> `tools/rest-probe/rest-probe.ps1` with the game open to confirm the
-> endpoints and paste real (anonymised) samples below.
+> **Status: partly verified.** Measured on LMU 1.4.2 (`gameVersion` 14200,
+> Steam build 25661166) on 2026-11-14: REST in the main menu, shared memory
+> layout against the shipped headers (`tools/layout-check`). Anything marked
+> *to verify* still comes from this repo's bridge or from TinyPedal
+> (`tinypedal/adapter/lmu_restapi.py`). Re-run `tools/rest-probe/rest-probe.ps1`
+> after each game update.
 
 ## REST API — `http://localhost:6397`
 
@@ -16,17 +15,35 @@
 - Some endpoints answer only inside a session (garage or on track).
   Expect connection errors in the main menu and empty objects between sessions.
 
-| Endpoint | Used by | What it gives | Polled |
+Status codes measured in the main menu (no session loaded):
+
+| Endpoint | Menu | What it gives | Used by |
 |---|---|---|---|
-| `/rest/sessions/weather` | pitwall, TinyPedal | Forecast per session (`PRACTICE`, `QUALIFY`, `RACE`), 5 nodes each | pitwall every 5 s |
-| `/rest/strategy/usage` | pitwall | Per-lap usage history per driver, keyed by driver name | pitwall every 3 s |
-| `/rest/garage/UIScreen/RepairAndRefuel` | pitwall, TinyPedal | Wear and damage, pit menu, `fuelInfo.maxVirtualEnergy` | pitwall every 2 s |
-| `/rest/strategy/pitstop-estimate` | TinyPedal | Estimated stationary pit time: `total`, `damage` (repair time) | — |
-| `/rest/sessions` | TinyPedal | Session settings, e.g. `SESSSET_race_timescale.currentValue` | — |
-| `/rest/sessions/setting/SESSSET_race_timescale` | TinyPedal | Race time scale | — |
-| `/rest/sessions/setting/SESSSET_private_qual` | TinyPedal | Private qualifying on/off | — |
-| `/rest/garage/getPlayerGarageData` | TinyPedal | Current car setup, `VM_STEER_LOCK.stringValue` | — |
-| `/rest/race/car` | TinyPedal (brand editor) | Car list with brands | — |
+| `/rest/sessions` | 200, 9 KB | All session settings (see below) | TinyPedal |
+| `/rest/sessions/weather` | 200, 5 KB | Forecast per session (`PRACTICE`, `QUALIFY`, `RACE`), 5 nodes each | pitwall (5 s), TinyPedal |
+| `/rest/strategy/usage` | 200, `null` | Per-lap usage history per driver. *To verify in session* | pitwall (3 s) |
+| `/rest/strategy/pitstop-estimate` | 200, `null` | Estimated stationary pit time: `total`, `damage`. *To verify in session* | TinyPedal |
+| `/rest/garage/UIScreen/RepairAndRefuel` | **404** | Wear and damage, pit menu, `fuelInfo.maxVirtualEnergy`. *To verify in session* | pitwall (2 s), TinyPedal |
+| `/rest/garage/getPlayerGarageData` | **404** | Current car setup. *To verify in session* | TinyPedal |
+| `/rest/race/car` | 200, 522 KB | Array of every car in the game (676), with fields `id`, `name`, `manufacturer`, `vehFile`, `engine`, `owned`, `fullPathTree`, `displayProperties`, `image`, `thumbnail`, `dlcappID`, `premId`, `sig` | TinyPedal |
+
+`/rest/sessions/setting/<KEY>` returns **404**: there is no per-setting path.
+The settings are keys inside `/rest/sessions`.
+
+### `/rest/sessions` (measured)
+
+An object with one key per setting, each shaped like:
+
+```json
+{"currentValue":1,"numStepsTotal":3,"settingID":40,"stringValue":"Realistic","uiSelectionType":"Arrow","valueType":"LONG"}
+```
+
+Keys useful for strategy: `SESSSET_Fuel_Usage`, `SESSSET_Tire_Wear`,
+`SESSSET_race_timescale`, `SESSSET_race_time`, `SESSSET_Race_Laps`,
+`SESSSET_Finish_Criteria`, `SESSSET_tire_warmers`,
+`SESSSET_tires_available_in_garage`, `SESSSET_timescaled_weather`,
+`SESSSET_weather`, `SESSSET_safetycar_thresh`, `SESSSET_blue_flags`,
+`SESSSET_Mech_Failures`, `SESSSET_Damage_Multi`.
 
 ### `/rest/sessions/weather`
 
@@ -36,10 +53,10 @@
   "QUALIFY":  { ... },
   "RACE":     { ... }
 }
-node = {
-  "WNV_SKY":           { "currentValue": 0..10 },   // 0 clear, 4 overcast, 6 cloudy + light rain, 10 storm
+node = {   // every value is { "currentValue": number, "stringValue": label }
+  "WNV_SKY":           { "currentValue": 3, "stringValue": "Mostly Cloudy" },  // 0..10: 0 clear, 4 overcast, 6 cloudy + light rain, 10 storm
   "WNV_TEMPERATURE":   { "currentValue": °C },
-  "WNV_RAIN_CHANCE":   { "currentValue": 0..100 },  // percent
+  "WNV_RAIN_CHANCE":   { "currentValue": 0, "stringValue": "0%" },          // percent
   "WNV_HUMIDITY":      { "currentValue": ... },
   "WNV_WINDDIRECTION": { "currentValue": ... },
   "WNV_WINDSPEED":     { "currentValue": ... }
@@ -87,7 +104,30 @@ measured per track (see the strategy phase).
 
 Requires *Settings → Gameplay → Enable Plugins → ON* and a full game restart.
 Layout: `bridge/src/shared_memory/lmu_data.rs`, from S397's
-`Support\SharedMemoryInterface\SharedMemoryInterface.hpp`.
+`Support\SharedMemoryInterface\SharedMemoryInterface.hpp`. On 1.4.2 every
+size and offset matches the shipped headers (`tools/layout-check`).
+
+### Synchronisation (new in the 1.4.2 header, not used by the bridge yet)
+
+The shipped header now defines named kernel objects. All of them exist while
+the game is running (checked by opening them):
+
+| Name | Kind | Use |
+|---|---|---|
+| `LMU_Data` | file mapping | the data |
+| `LMU_Data_HoldEvent`, `LMU_Data_DataEvent` | events | `WaitForNextFrame`: wait on Hold, then Data → a new frame is ready. No polling needed |
+| `LMU_SharedMemoryLockData` + `LMU_SharedMemoryLockEvent` | mapping + event | `SharedMemoryLock`: spin lock (`busy`/`waiters`) held by the game while writing. A reader takes it around its copy |
+
+The bridge still polls at 50 Hz and checks for torn copies by re-reading a few
+fields (the "witness" read). Switching to the events and the lock gives
+coherent copies at the game's own frame rate. This matters for coaching, which
+needs every 100 Hz frame. The lock blocks the game's writer, so the copy under
+it must stay short.
+
+`generic.events[16]` is described in the header as a *queue of event types*
+(`SharedMemoryEvent` values), not as counters. `CopySharedMemoryObj` scans it
+for `SME_UPDATE_SCORING` / `SME_UPDATE_TELEMETRY` to decide what to copy. The
+bridge names those slots like counters; the size is the same.
 
 | Block | Rate | Content |
 |---|---|---|

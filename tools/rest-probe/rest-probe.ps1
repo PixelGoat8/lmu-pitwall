@@ -23,8 +23,6 @@ param(
 $endpoints = @(
     "/rest/sessions",
     "/rest/sessions/weather",
-    "/rest/sessions/setting/SESSSET_race_timescale",
-    "/rest/sessions/setting/SESSSET_private_qual",
     "/rest/strategy/usage",
     "/rest/strategy/pitstop-estimate",
     "/rest/garage/UIScreen/RepairAndRefuel",
