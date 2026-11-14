@@ -9,6 +9,7 @@ import InputBars from './widgets/InputBars'
 import Standings from './widgets/Standings'
 import BattleWidget from './widgets/BattleWidget'
 import GapWidget from './widgets/GapWidget'
+import TeamWidget from './widgets/TeamWidget'
 import SessionInfo from './widgets/SessionInfo'
 import WeatherWidget from './widgets/WeatherWidget'
 import ConnectionStatus from './widgets/ConnectionStatus'
@@ -98,6 +99,13 @@ export const WIDGET_REGISTRY: Record<string, WidgetMeta> = {
     component: GapWidget,
     defaultSize: { w: 4, h: 3 },
     minSize: { w: 3, h: 2 },
+  },
+  TeamWidget: {
+    id: 'TeamWidget',
+    name: 'Team & Stints (hub)',
+    component: TeamWidget,
+    defaultSize: { w: 6, h: 7 },
+    minSize: { w: 4, h: 3 },
   },
   SessionInfo: {
     id: 'SessionInfo',

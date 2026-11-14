@@ -172,7 +172,8 @@ interface LayoutStore {
   setPreset: (presetName: string) => void
   resetToDefault: () => void
   toggleLock: () => void
-  addWidget: (widgetType: string) => void
+  // `size` comes from the widget registry; without it the widget is 3×4.
+  addWidget: (widgetType: string, size?: { w: number; h: number; minW?: number; minH?: number }) => void
   removeWidget: (id: string) => void
   setScale: (id: string, scale: number) => void
   exportLayout: () => string
@@ -221,9 +222,13 @@ export const useLayoutStore = create<LayoutStore>()(
 
       toggleLock: () => set((s) => ({ locked: !s.locked })),
 
-      addWidget: (widgetType) => {
+      addWidget: (widgetType, size) => {
         const id = `${widgetType.toLowerCase()}-${Date.now()}`
-        const newItem = { i: id, x: 0, y: Infinity, w: 3, h: 4, minW: 2, minH: 2 }
+        const newItem = {
+          i: id, x: 0, y: Infinity,
+          w: size?.w ?? 3, h: size?.h ?? 4,
+          minW: size?.minW ?? 2, minH: size?.minH ?? 2,
+        }
         set((s) => ({
           widgets: [...s.widgets, { id, widgetType }],
           layouts: {

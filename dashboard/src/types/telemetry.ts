@@ -288,6 +288,58 @@ export interface VersionInfo {
   update_available: boolean
 }
 
+// --- Hub mode: sent only by a Pitwall started with --hub ---------------------
+
+export interface HubSourceStatus {
+  id: string
+  label: string
+  host: string
+  link: 'connecting' | 'connected' | 'unauthorized' | 'unreachable'
+  game_connected: boolean
+  session_active: boolean
+  pc_player: string
+  driver_name: string
+  control: number | null
+  driving: boolean
+  in_pits: boolean
+  last_frame_age_ms: number | null
+}
+
+export interface HubStatus {
+  type: 'HubStatus'
+  sources: HubSourceStatus[]
+  active_id: string | null   // bridge whose stream is on screen
+  follow: string | null      // bridge pinned by the engineer; null = follow the driver
+}
+
+export interface HubStintInfo {
+  number: number
+  driver: string
+  source: string
+  start_time: number
+  end_time: number | null    // null while running
+  start_lap: number
+  end_lap: number
+  laps: number
+  best_lap: number | null
+  avg_lap: number | null
+  last_lap: number | null
+  fuel_start: number | null
+  fuel_end: number | null
+  ve_start: number | null
+  ve_end: number | null
+}
+
+export interface HubStints {
+  type: 'HubStints'
+  stints: HubStintInfo[]
+}
+
+export interface HubError {
+  type: 'HubError'
+  message: string
+}
+
 export type ServerMessage =
   | TelemetryUpdate
   | ScoringUpdate
@@ -298,3 +350,6 @@ export type ServerMessage =
   | Heartbeat
   | AllDriversUpdate
   | VersionInfo
+  | HubStatus
+  | HubStints
+  | HubError

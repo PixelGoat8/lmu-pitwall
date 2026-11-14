@@ -30,6 +30,17 @@ const STALE_AFTER_MS = 7_000
 const CONNECT_TIMEOUT_MS = 5_000
 const WATCHDOG_INTERVAL_MS = 1_000
 
+// The live socket, for components that need to send a command to the bridge
+// (or hub) without owning a connection of their own.
+let liveSocket: WebSocket | null = null
+
+/** Send a command on the dashboard's main connection. False if it is down. */
+export function sendBridgeCommand(command: object): boolean {
+  if (!liveSocket || liveSocket.readyState !== WebSocket.OPEN) return false
+  liveSocket.send(JSON.stringify(command))
+  return true
+}
+
 export function useWebSocket() {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectAttemptRef = useRef(0)
@@ -65,6 +76,7 @@ export function useWebSocket() {
       ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null
       try { ws.close() } catch { /* already closed */ }
       wsRef.current = null
+      if (liveSocket === ws) liveSocket = null
       if (!mountedRef.current) return
 
       reconnectAttemptRef.current += 1
@@ -90,6 +102,7 @@ export function useWebSocket() {
       if (!mountedRef.current) { ws.close(); return }
       reconnectAttemptRef.current = 0
       lastMessageAtRef.current = Date.now()
+      liveSocket = ws
       setConnection('connected')
     }
 

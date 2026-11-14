@@ -11,6 +11,7 @@ import type {
   VersionInfo,
 } from '../types/telemetry'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
+import type { HubStatus, HubStintInfo } from '../types/telemetry'
 
 // ---------------------------------------------------------------------------
 // Lap history
@@ -113,6 +114,13 @@ interface ConnectionSection {
   session_active: boolean
 }
 
+// Present only when the dashboard is connected to a hub (status !== null).
+interface HubSection {
+  status: HubStatus | null
+  stints: HubStintInfo[]
+  error: string | null
+}
+
 type VersionInfoSection = Omit<VersionInfo, 'type'> | null
 
 // ---------------------------------------------------------------------------
@@ -128,6 +136,7 @@ interface TelemetryStore {
   allDrivers: AllDriversSection
   connection: ConnectionSection
   versionInfo: VersionInfoSection
+  hub: HubSection
   lapHistory: LapEntry[]
   weatherHistory: WeatherSnapshot[]
   _lapTracking: { prevTotalLaps: number; prevPlayerId: number }
@@ -294,6 +303,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   allDrivers: defaultAllDrivers,
   connection: defaultConnection,
   versionInfo: null,
+  hub: { status: null, stints: [], error: null },
   lapHistory: [],
   weatherHistory: [],
   _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
@@ -523,6 +533,18 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
             lastUpdated: Date.now(),
           },
         })
+        break
+
+      case 'HubStatus':
+        set((state) => ({ hub: { ...state.hub, status: msg } }))
+        break
+
+      case 'HubStints':
+        set((state) => ({ hub: { ...state.hub, stints: msg.stints, error: null } }))
+        break
+
+      case 'HubError':
+        set((state) => ({ hub: { ...state.hub, error: msg.message } }))
         break
 
       case 'VersionInfo':

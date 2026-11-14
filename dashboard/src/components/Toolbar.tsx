@@ -188,6 +188,45 @@ function UpdateBadge() {
   )
 }
 
+/** On a hub: who is on screen right now. Nothing on an ordinary bridge. */
+function HubBadge() {
+  const status = useTelemetryStore((s) => s.hub.status)
+  const widgets = useLayoutStore((s) => s.widgets)
+  const addWidget = useLayoutStore((s) => s.addWidget)
+  if (!status) return null
+  const hasPanel = widgets.some((w) => w.widgetType === 'TeamWidget')
+  const active = status.sources.find((s) => s.id === status.active_id)
+  const text = active
+    ? `${active.label}${active.driving ? '' : ' (not driving)'}`
+    : status.sources.length ? 'nobody connected' : 'no drivers added'
+  return (
+    <button
+      onClick={() => { if (!hasPanel) addWidget('TeamWidget', registrySize('TeamWidget')) }}
+      title={`${status.follow ? 'Hub pinned to this PC' : 'Hub following whoever is driving'}${hasPanel ? '' : ' — click to add the Team panel'}`}
+      style={{
+        fontFamily: fonts.body,
+        fontSize: 15,
+        padding: '3px 8px',
+        borderRadius: 3,
+        whiteSpace: 'nowrap',
+        background: 'transparent',
+        cursor: hasPanel ? 'default' : 'pointer',
+        color: active?.driving ? colors.primary : colors.textMuted,
+        border: `1px solid ${active?.driving ? colors.primary : colors.border}`,
+      }}
+    >
+      👥 {text}{status.follow ? ' 📌' : ''}
+    </button>
+  )
+}
+
+/** Registry size of a widget type, in the shape the layout store wants. */
+function registrySize(widgetType: string) {
+  const meta = WIDGET_REGISTRY[widgetType]
+  if (!meta) return undefined
+  return { w: meta.defaultSize.w, h: meta.defaultSize.h, minW: meta.minSize.w, minH: meta.minSize.h }
+}
+
 function ConnectionBadge() {
   const status = useTelemetryStore((s) => s.connection.status)
   const gameConnected = useTelemetryStore((s) => s.connection.game_connected)
@@ -259,6 +298,7 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
       </span>
 
       <ConnectionBadge />
+      <HubBadge />
 
       <div style={{ width: 1, height: 27, background: colors.border, margin: '0 4px' }} />
 
@@ -291,7 +331,7 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
       {!locked && (
         <select
           value=""
-          onChange={(e) => { if (e.target.value) addWidget(e.target.value) }}
+          onChange={(e) => { if (e.target.value) addWidget(e.target.value, registrySize(e.target.value)) }}
           style={{
             background: colors.bgWidget,
             border: `1px solid ${colors.border}`,
