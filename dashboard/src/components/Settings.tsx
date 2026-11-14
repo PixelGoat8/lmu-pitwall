@@ -235,6 +235,16 @@ export default function Settings({ open, onClose }: Props) {
                 style={inputStyle}
               />
             </Row>
+            <Row label="Access Token">
+              <input
+                type="password"
+                value={s.bridgeToken}
+                placeholder="not needed on the racing PC"
+                autoComplete="off"
+                onChange={(e) => s.update({ bridgeToken: e.target.value.trim() })}
+                style={inputStyle}
+              />
+            </Row>
             <Row label="Bridge Port">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input

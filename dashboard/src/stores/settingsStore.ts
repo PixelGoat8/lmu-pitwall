@@ -28,6 +28,9 @@ export interface SettingsState {
   lapReserve: number   // extra laps of fuel added to refuel estimate (e.g. 0.5)
   wsHost: string       // empty = auto (window.location.hostname)
   wsPort: number
+  // Access token for a bridge on another machine. Empty on the racing PC
+  // itself. Deliberately left out of exportSettings: it is a secret.
+  bridgeToken: string
   primaryColor: string
   accentColor: string
   fpsLimit: FpsLimit
@@ -90,6 +93,7 @@ export const SETTINGS_DEFAULTS: SettingsState = {
   lapReserve: 0.5,
   wsHost: '',
   wsPort: 0,
+  bridgeToken: '',
   primaryColor: '#facc15',
   accentColor: '#f97316',
   fpsLimit: 0,

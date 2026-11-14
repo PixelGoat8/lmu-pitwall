@@ -107,6 +107,7 @@ interface ConnectionSection {
   plugin_version: string
   telemetry_valid: boolean
   telemetry_warning: string | null
+  session_active: boolean
 }
 
 type VersionInfoSection = Omit<VersionInfo, 'type'> | null
@@ -254,6 +255,7 @@ const defaultConnection: ConnectionSection = {
   plugin_version: '',
   telemetry_valid: true,
   telemetry_warning: null,
+  session_active: false,
 }
 
 const defaultAllDrivers: AllDriversSection = {
@@ -476,7 +478,9 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
         })
         break
 
-      case 'ConnectionStatus':
+      case 'ConnectionStatus': {
+        // A bridge that predates session_active streams whenever the game runs.
+        const sessionActive = msg.session_active ?? msg.game_connected
         set((state) => ({
           connection: {
             ...state.connection,
@@ -484,9 +488,22 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
             plugin_version: msg.plugin_version,
             telemetry_valid: msg.telemetry_valid,
             telemetry_warning: msg.telemetry_warning,
+            session_active: sessionActive,
           },
+          // No session: the bridge has stopped streaming, so whatever is on
+          // screen belongs to a session that is over. Clear it rather than
+          // leave a frozen car on the map. Lap and weather history stay —
+          // they are a record, not live state.
+          ...(sessionActive ? {} : {
+            telemetry: defaultTelemetry,
+            scoring: defaultScoring,
+            session: defaultSession,
+            electronics: defaultElectronics,
+            vehicleStatus: defaultVehicleStatus,
+          }),
         }))
         break
+      }
 
       case 'AllDriversUpdate':
         set({

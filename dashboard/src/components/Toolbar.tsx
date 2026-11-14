@@ -1,40 +1,160 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLayoutStore, LAYOUT_PRESETS } from '../stores/layoutStore'
 import { useTelemetryStore } from '../stores/telemetryStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { WIDGET_REGISTRY } from './widgetRegistry'
 import { colors, fonts } from '../styles/theme'
-import { bridgeHttpBase } from '../utils/bridge'
+import { bridgeApiUrl } from '../utils/bridge'
 
+interface NetworkInfo {
+  ip: string
+  port: number
+  local?: boolean
+  tailscale_ip?: string | null
+  token?: string
+}
+
+/**
+ * On the racing PC: a "Remote link" button that shows the links to send to
+ * the engineer (address + access token in one URL). The bridge only reveals
+ * the token to its own machine, so on any other device this is just the
+ * address, as before.
+ */
 function NetworkBadge() {
   const wsHost = useSettingsStore((s) => s.wsHost)
   const wsPort = useSettingsStore((s) => s.wsPort)
-  const [address, setAddress] = useState<string | null>(null)
+  const bridgeToken = useSettingsStore((s) => s.bridgeToken)
+  const [info, setInfo] = useState<NetworkInfo | null>(null)
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
-    fetch(`${bridgeHttpBase()}/api/network-info`)
-      .then((r) => r.json())
-      .then((data: { ip: string; port: number }) => setAddress(`${data.ip}:${data.port}`))
-      .catch(() => {})
-  }, [wsHost, wsPort])
+    fetch(bridgeApiUrl('/api/network-info'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: NetworkInfo | null) => setInfo(data))
+      .catch(() => setInfo(null))
+  }, [wsHost, wsPort, bridgeToken, open])
 
-  if (!address) return null
+  if (!info) return null
+
+  if (!info.local || !info.token) {
+    return (
+      <span
+        title="Network address of the bridge"
+        style={{
+          fontFamily: fonts.body,
+          fontSize: 13,
+          color: colors.textMuted,
+          letterSpacing: 0.3,
+          userSelect: 'text',
+          cursor: 'text',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {info.ip}:{info.port}
+      </span>
+    )
+  }
+
+  const link = (host: string) => `http://${host}:${info.port}/?token=${info.token}`
 
   return (
-    <span
-      title="Network address — open this in your tablet's browser"
-      style={{
-        fontFamily: fonts.body,
-        fontSize: 13,
-        color: colors.textMuted,
-        letterSpacing: 0.3,
-        userSelect: 'text',
-        cursor: 'text',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {address}
-    </span>
+    <div style={{ position: 'relative' }}>
+      <ToolbarBtn onClick={() => setOpen((o) => !o)} title="Link for your engineer or a tablet" active={open}>
+        🔗
+      </ToolbarBtn>
+      {open && (
+        <div style={{
+          position: 'absolute',
+          right: 0,
+          top: '115%',
+          zIndex: 1000,
+          width: 'min(92vw, 460px)',
+          background: colors.bgCard,
+          border: `1px solid ${colors.border}`,
+          borderRadius: 4,
+          padding: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
+          fontFamily: fonts.body,
+          fontSize: 14,
+          color: colors.textMuted,
+        }}>
+          <div style={{ color: colors.text, fontSize: 16 }}>Remote link</div>
+          {info.tailscale_ip ? (
+            <LinkRow label="Over Tailscale (engineer at home)" url={link(info.tailscale_ip)} />
+          ) : (
+            <div>
+              Tailscale is not running on this PC. Install and sign in to Tailscale
+              to get a link that works from outside your home network.
+            </div>
+          )}
+          <LinkRow label="Same Wi-Fi / LAN (tablet next to you)" url={link(info.ip)} />
+          <div style={{ fontSize: 12 }}>
+            The link contains your access token. Send it only to people who should
+            see your telemetry. Whoever opens it can watch, not control this PC.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LinkRow({ label, url }: { label: string; url: string }) {
+  const [copied, setCopied] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const copy = useCallback(() => {
+    const done = () => { setCopied(true); setTimeout(() => setCopied(false), 1500) }
+    // The clipboard API needs a secure context; localhost is one. Fall back
+    // to selecting the text so Ctrl+C works anywhere.
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(done).catch(() => inputRef.current?.select())
+    } else {
+      inputRef.current?.select()
+    }
+  }, [url])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>{label}</span>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          ref={inputRef}
+          readOnly
+          value={url}
+          onFocus={(e) => e.currentTarget.select()}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            background: colors.bgWidget,
+            border: `1px solid ${colors.border}`,
+            color: colors.text,
+            fontFamily: fonts.mono,
+            fontSize: 12,
+            padding: '5px 7px',
+            borderRadius: 3,
+          }}
+        />
+        <button
+          onClick={copy}
+          style={{
+            background: copied ? colors.success : colors.primary,
+            color: '#000',
+            border: 'none',
+            borderRadius: 3,
+            fontFamily: fonts.body,
+            fontSize: 13,
+            padding: '4px 12px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -71,6 +191,7 @@ function UpdateBadge() {
 function ConnectionBadge() {
   const status = useTelemetryStore((s) => s.connection.status)
   const gameConnected = useTelemetryStore((s) => s.connection.game_connected)
+  const sessionActive = useTelemetryStore((s) => s.connection.session_active)
 
   const dotColor =
     status === 'connected' ? colors.success
@@ -78,9 +199,11 @@ function ConnectionBadge() {
     : colors.danger
 
   const label =
-    status === 'connected' && gameConnected ? 'Live'
+    status === 'connected' && gameConnected && sessionActive ? 'Live'
+    : status === 'connected' && gameConnected ? 'Menu'
     : status === 'connected' ? 'Bridge'
     : status === 'reconnecting' ? '…'
+    : status === 'unauthorized' ? 'Token?'
     : 'Off'
 
   return (
@@ -216,7 +339,7 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
 
       <div style={{ width: 1, height: 27, background: colors.border, margin: '0 2px' }} />
 
-      {/* Network address for tablet users */}
+      {/* Remote link (on the racing PC) or bridge address (elsewhere) */}
       <NetworkBadge />
 
       <div style={{ width: 1, height: 27, background: colors.border, margin: '0 2px' }} />

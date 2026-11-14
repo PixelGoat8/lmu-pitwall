@@ -48,6 +48,7 @@ function Row({ label, value, color, dot }: RowProps) {
 export default function ConnectionStatus() {
   const status = useTelemetryStore((s) => s.connection.status)
   const gameConnected = useTelemetryStore((s) => s.connection.game_connected)
+  const sessionActive = useTelemetryStore((s) => s.connection.session_active)
   // Still called plugin_version on the wire; since the port to LMU_Data it
   // carries Le Mans Ultimate's own build number.
   const gameVersion = useTelemetryStore((s) => s.connection.plugin_version)
@@ -79,6 +80,7 @@ export default function ConnectionStatus() {
   const wsLabel =
     status === 'connected' ? 'Connected'
     : status === 'reconnecting' ? 'Reconnecting…'
+    : status === 'unauthorized' ? 'Wrong token'
     : 'Disconnected'
 
   const gameColor = gameConnected ? colors.success : colors.textMuted
@@ -109,7 +111,12 @@ export default function ConnectionStatus() {
       </div>
 
       <Row label="Bridge" value={wsLabel} color={wsColor} dot />
-      <Row label="Game" value={gameConnected ? 'Connected' : 'Waiting'} color={gameColor} dot />
+      <Row
+        label="Game"
+        value={!gameConnected ? 'Waiting' : sessionActive ? 'In session' : 'In menus'}
+        color={gameConnected && !sessionActive ? colors.primary : gameColor}
+        dot
+      />
       <Row label="Updates/s" value={`${fps}`} color={fpsColor} />
 
       {/* Shared-memory layout drift — tire/brake values cannot be trusted */}

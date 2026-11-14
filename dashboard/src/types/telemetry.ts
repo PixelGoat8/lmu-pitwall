@@ -247,6 +247,17 @@ export interface ConnectionStatus {
   // parses — tire and brake readings are unreliable in that case
   telemetry_valid: boolean
   telemetry_warning: string | null
+  // false in the menus, including after leaving a session: the bridge then
+  // sends no telemetry and what is on screen must be dropped.
+  // Optional: bridges older than this field do not send it.
+  session_active?: boolean
+}
+
+// Sent every 2 s regardless of the game. Its arrival is the point: the
+// connection watchdog treats silence as a dead link.
+export interface Heartbeat {
+  type: 'Heartbeat'
+  server_time_ms: number
 }
 
 export interface VersionInfo {
@@ -264,5 +275,6 @@ export type ServerMessage =
   | ElectronicsUpdate
   | VehicleStatusUpdate
   | ConnectionStatus
+  | Heartbeat
   | AllDriversUpdate
   | VersionInfo
