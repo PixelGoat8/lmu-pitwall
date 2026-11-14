@@ -74,7 +74,16 @@ def main():
                          lap=args.lap_time * factor * (1 + rng.uniform(-0.012, 0.012)),
                          start=-i * 0.012))  # grid stagger, in laps
     cars[player_id]["model"] = "Peugeot 9X8"
-    PIT_LOSS = 12.0  # seconds stationary
+    STATIONARY = 12.0  # seconds stopped in the box
+    LANE_EXTRA = 20.0  # extra seconds the pit lane costs on top of that
+    PIT_FREEZE = STATIONARY + LANE_EXTRA
+    TYRE_DEG = 0.003   # team car lap time grows 0.3 % per lap of tyre age
+    VE_PER_LAP = 0.045
+    # The game's pit work times as LMU 1.4.2 reported them for a Hypercar.
+    PIT_TIMES = dict(fuel_fill_rate=4.0, fuel_insert_s=1.0, fuel_concurrent=True,
+                     ve_fill_rate=0.025, ve_insert_s=0.0, ve_concurrent=True,
+                     four_tyres_s=12.0, two_tyres_s=4.5, tyres_concurrent=False,
+                     driver_change_s=25.0, driver_concurrent=True)
 
     def driver_at(t):
         for a, b, name in team:
@@ -86,7 +95,14 @@ def main():
     fuel_cap, fuel = 90.0, 90.0
     fuel_per_lap = 2.9
     wear = [1.0, 1.0, 1.0, 1.0]
+    ve = 1.0
+    tyre_age = 0
+    # This lap's consumption, spent progressively as the lap goes on (like the
+    # game), not in one step at the line.
+    lap_fuel_use = fuel_per_lap
+    lap_ve_use = VE_PER_LAP
     stint, stint_laps, stint_start_fuel = 1, 0, fuel
+    progress = [c["start"] for c in cars]  # laps, integrated over time
     lock = dict(count=0, total=0.0, longest=0.0)
     laps_done = [0] * args.cars
     last_lap = [-1.0] * args.cars
@@ -117,9 +133,10 @@ def main():
         for c in cars:
             i = c["id"]
             in_pit = t < pit_until[i]
-            # Time actually spent driving: frozen while the car sits in its box.
-            driven = (pit_until[i] - pit_delay[i]) if in_pit else (t - pit_delay[i])
-            total = c["start"] + driven / c["lap"]
+            if not in_pit:
+                lap_len = c["lap"] * (1 + TYRE_DEG * tyre_age if i == player_id else 1)
+                progress[i] += dt / lap_len
+            total = progress[i]
             laps = int(math.floor(total)) if total >= 0 else 0
             if laps > laps_done[i]:
                 lt = t - lap_start[i]
@@ -128,20 +145,31 @@ def main():
                 lap_start[i] = t
                 laps_done[i] = laps
                 if i == player_id:
-                    used = fuel_per_lap * (1 + rng.uniform(-0.03, 0.03))
+                    used = lap_fuel_use
                     fuel = max(0.0, fuel - used)
+                    ve = max(0.0, ve - lap_ve_use)
                     recent_fuel.append(used)
+                    lap_fuel_use = fuel_per_lap * (1 + rng.uniform(-0.03, 0.03))
+                    lap_ve_use = VE_PER_LAP * (1 + rng.uniform(-0.03, 0.03))
                     stint_laps += 1
+                    tyre_age += 1
                     for w in range(4):
                         wear[w] = max(0.0, wear[w] - (0.006 if w == 0 else 0.004))
                     if args.pit_every and laps % args.pit_every == 0:
-                        pit_until[i] = t + PIT_LOSS
-                        pit_delay[i] += PIT_LOSS
+                        # The car stops for PIT_FREEZE seconds right after the
+                        # line: STATIONARY in the box, the rest is the lane.
+                        pit_until[i] = t + PIT_FREEZE
+                        pit_delay[i] += PIT_FREEZE
                         pitstops[i] += 1
-                        fuel, wear = fuel_cap, [1.0, 1.0, 1.0, 1.0]
+                        fuel, ve, wear, tyre_age = fuel_cap, 1.0, [1.0, 1.0, 1.0, 1.0], 0
                         stint, stint_laps, stint_start_fuel = stint + 1, 0, fuel
                         lock = dict(count=0, total=0.0, longest=0.0)
             prog.append((total, c))
+
+        team_total = prog[player_id][0]
+        team_frac = (team_total - math.floor(team_total)) if team_total >= 0 else 0.0
+        fuel_live = max(0.0, fuel - lap_fuel_use * team_frac)
+        ve_live = max(0.0, ve - lap_ve_use * team_frac)
 
         order = sorted(prog, key=lambda x: -x[0])
         leader_total = order[0][0]
@@ -185,11 +213,13 @@ def main():
                     pos_z=400 * math.sin(ang) + 100 * math.sin(2 * ang),
                     time_behind_leader=(behind_laps - math.floor(behind_laps)) * lapt,
                     laps_behind_leader=int(math.floor(behind_laps)),
-                    virtual_energy=(max(0.0, 1 - (laps_done[i] % 12) * 0.08) if c["cls"] == "Hyper" else 0.0),
+                    virtual_energy=(ve_live if is_team else (max(0.0, 1 - (laps_done[i] % 12) * 0.08) if c["cls"] == "Hyper" else 0.0)),
                     control=((0 if i_drive else 2) if is_team else 2),
                     time_behind_next=((prev[0] - total) * lapt if prev else 0.0),
                     laps_behind_next=0, num_pitstops=pitstops[i],
-                    pit_state=(3 if t < pit_until[i] else 0),
+                    pit_state=(0 if t >= pit_until[i] else
+                               3 if LANE_EXTRA / 2 <= PIT_FREEZE - (pit_until[i] - t) < LANE_EXTRA / 2 + STATIONARY else
+                               2 if PIT_FREEZE - (pit_until[i] - t) < LANE_EXTRA / 2 else 4),
                 ))
             emit(t, dict(type="ScoringUpdate", session_type=args.session, session_time=t,
                          num_vehicles=len(vehicles), vehicles=vehicles, player_vehicle_id=player_id,
@@ -217,7 +247,7 @@ def main():
                 lockup_longest_s=(lock["longest"] if w == 0 and i_drive else 0.0),
                 locked=(locked_now and w == 0 and i_drive),
             ))
-        shown_fuel = fuel if i_drive else 50.0
+        shown_fuel = fuel_live if i_drive else 50.0
         ang = 2 * math.pi * frac
         emit(t, dict(
             type="TelemetryUpdate", speed_ms=speed, rpm=4000 + speed * 55, max_rpm=8600,
@@ -244,7 +274,17 @@ def main():
                          weather=dict(air_temp=24.0, track_temp=36.0, rain_intensity=0.0, dark_cloud=0.2,
                                       cloudiness=1.0, avg_path_wetness=0.0, min_path_wetness=0.0,
                                       max_path_wetness=0.0, wind_speed_live=3.0, wind_rel_deg=40.0, forecast=fc),
-                         session_laps=0, session_minutes=args.duration / 60.0))
+                         session_laps=0, session_minutes=args.duration / 60.0,
+                         time_remaining=max(0.0, args.duration - t)))
+            emit(t, dict(type="VehicleStatusUpdate", overheating=False, any_detached=False, dent_severity=[0] * 8,
+                         last_impact_magnitude=0.0, last_impact_et=0.0, tire_flat=[False] * 4, tire_detached=[False] * 4,
+                         aero_damage=0.0, brake_wear=[0.0] * 4, suspension_damage=[0.0] * 4, yellow_flag_state=0,
+                         sector_flags=[0, 0, 0], start_light=0, game_phase=5, player_flag=0, individual_phase=0,
+                         player_under_yellow=False, player_sector=1, safety_car_active=False))
+        if step % 20 == 0 and i_drive:
+            emit(t, dict(type="PitInfo", fuel=fuel_live, fuel_capacity=fuel_cap, ve=ve_live, times=PIT_TIMES,
+                         estimate=dict(total=0.0, fuel=0.0, ve=0.0, tires=0.0, driver_swap=0.0, damage=0.0, penalties=0.0),
+                         menu_ve=None, menu_fuel=None, recommended_fuel=None, recommended_ve=None))
 
     with open(args.out, "w", encoding="utf-8") as f:
         f.write("# Synthetic session from tools/mock-session/make_session.py - NOT real telemetry\n")

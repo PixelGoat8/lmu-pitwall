@@ -103,21 +103,43 @@ pub fn slope(points: &[(f64, f64)]) -> Option<f64> {
 
 /// Per-lap consumption of one quantity (fuel or VE), from consecutive laps.
 ///
-/// A sample is the drop between two consecutive line crossings. Laps through
-/// the pit lane are left out (a refuel makes the "drop" negative, and the
-/// pit lane is driven slowly), and so are laps under caution, which consume
-/// far less than racing laps and would make the plan optimistic.
+/// Laps through the pit lane are left out (a refuel makes the "drop"
+/// negative, and the pit lane is driven slowly), and so are laps under
+/// caution, which consume far less than racing laps and would make the plan
+/// optimistic.
+///
+/// Each sample is the average over the run of green laps it belongs to, up
+/// to that lap: (level at the start of the run − level now) / laps. Reading
+/// the level at the line is never exactly on the line — the last reading can
+/// be a few hundredths of a second either side — and a lap-by-lap difference
+/// turns that jitter into noise of the same size as the signal on a short
+/// lap. Over a run the jitter is divided by the number of laps.
 pub fn consumption(laps: &[LapSample], pick: impl Fn(&LapSample) -> Option<f64>) -> Vec<(f64, f64)> {
-    laps.windows(2)
-        .filter_map(|w| {
-            let (a, b) = (&w[0], &w[1]);
-            if b.lap != a.lap + 1 || b.pit || b.caution {
-                return None;
+    let mut out = Vec::new();
+    let mut run_start: Option<(i64, f64)> = None;
+    let mut prev: Option<&LapSample> = None;
+    for l in laps {
+        let level = pick(l);
+        let continues = prev.map(|p| l.lap == p.lap + 1).unwrap_or(false) && !l.pit && !l.caution;
+        match (continues, run_start, level) {
+            (true, Some((lap0, level0)), Some(level)) => {
+                let used = (level0 - level) / (l.lap - lap0) as f64;
+                if used > 0.0 {
+                    out.push((l.lap as f64, used));
+                } else {
+                    // A level that went up without a pit stop: start over.
+                    run_start = Some((l.lap, level));
+                }
             }
-            let used = pick(a)? - pick(b)?;
-            (used > 0.0).then_some((b.lap as f64, used))
-        })
-        .collect()
+            _ => run_start = level.map(|v| (l.lap, v)),
+        }
+        // A pit or caution lap ends the run; the next green lap starts from it.
+        if l.pit || l.caution {
+            run_start = level.map(|v| (l.lap, v));
+        }
+        prev = Some(l);
+    }
+    out
 }
 
 /// Lap times worth judging pace on: not through the pits, not under caution,
@@ -632,13 +654,26 @@ mod tests {
         laps.push(l6);
         laps.push(lap(8, 90.0, 80.0, 0.88)); // lap 7 missing
         let fuel = consumption(&laps, |l| l.fuel);
-        let used: Vec<f64> = fuel.iter().map(|p| (p.1 * 10.0).round() / 10.0).collect();
+        let used: Vec<f64> = fuel.iter().map(|p| (p.1 * 100.0).round() / 100.0).collect();
+        // Lap 3 is the average of laps 2-3; after the stop, lap 5 starts a new run.
         assert_eq!(fuel.iter().map(|p| p.0 as i64).collect::<Vec<_>>(), vec![2, 3, 5]);
-        assert_eq!(used, vec![3.0, 2.9, 3.0]);
+        assert_eq!(used, vec![3.0, 2.95, 3.0]);
         assert_eq!(consumption(&laps, |l| l.ve).len(), 3);
-        // A missing reading on either side drops that sample.
+        // A missing reading breaks the run.
         laps[1].fuel = None;
         assert_eq!(consumption(&laps, |l| l.fuel).len(), 1);
+    }
+
+    #[test]
+    fn reading_jitter_at_the_line_averages_out() {
+        // 3 L a lap, but the level is read alternately just before and just
+        // after the line (±0.5 L): lap by lap that is 2 and 4 L.
+        let laps: Vec<LapSample> = (1..=9)
+            .map(|n| lap(n, 90.0, 90.0 - 3.0 * n as f64 + if n % 2 == 0 { 0.5 } else { -0.5 }, 0.0))
+            .collect();
+        let st = Stat::of(&consumption(&laps, |l| l.fuel)).unwrap();
+        assert!((st.median - 3.0).abs() < 0.15, "{st:?}");
+        assert!((st.last - 3.0).abs() < 0.1, "{st:?}");
     }
 
     #[test]
