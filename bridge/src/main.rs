@@ -13,12 +13,14 @@ mod http_server;
 mod hub;
 mod idle;
 mod lap_tracker;
+mod pit_api;
 mod post_race;
 mod protocol;
 mod race_engineer;
 mod recording;
 mod rest_api;
 mod shared_memory;
+mod strategy;
 mod tyres;
 mod websocket;
 
@@ -439,6 +441,8 @@ fn build_session_info(sc: &ScoringFrame, forecast: Vec<garage_api::WeatherForeca
         // Only send a valid lap count when it's a genuine lap-limited session.
         session_laps:    if info.mMaxLaps > 0 && info.mMaxLaps < 999_000 { info.mMaxLaps } else { 0 },
         session_minutes: if info.mEndET > 0.0 { info.mEndET / 60.0 } else { 0.0 },
+        time_remaining:  (info.mEndET > 0.0 && info.mSessionTimeRemaining >= 0.0)
+            .then_some(info.mSessionTimeRemaining as f64),
     }
 }
 
@@ -576,7 +580,9 @@ async fn task_polling(
     let strategy_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     // Channel for wearables (RepairAndRefuel) fetch results.
-    let (wearables_tx, mut wearables_rx) = tokio::sync::mpsc::channel::<garage_api::WearablesSnapshot>(4);
+    // One RepairAndRefuel request feeds both the wearables and PitInfo.
+    let (wearables_tx, mut wearables_rx) =
+        tokio::sync::mpsc::channel::<(Option<garage_api::WearablesSnapshot>, pit_api::PitInfo)>(4);
     // Guard: skip tick if a wearables fetch is already in flight.
     let wearables_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -823,8 +829,10 @@ async fn task_polling(
                     let flag = wearables_in_flight.clone();
                     flag.store(true, Ordering::Relaxed);
                     tokio::task::spawn_blocking(move || {
-                        if let Some(w) = garage_api::fetch_wearables() {
-                            let _ = tx.blocking_send(w);
+                        if let Some(json) = pit_api::fetch_repair_and_refuel() {
+                            let wear = garage_api::wearables_from(&json);
+                            let pit = pit_api::fetch_pit_info(&json);
+                            let _ = tx.blocking_send((wear, pit));
                         }
                         flag.store(false, Ordering::Relaxed);
                     });
@@ -832,8 +840,13 @@ async fn task_polling(
             }
 
             // --- wearables result ---
-            Some(w) = wearables_rx.recv() => {
-                state.write().await.wearables = w;
+            Some((wear, pit)) = wearables_rx.recv() => {
+                if let Some(w) = wear {
+                    state.write().await.wearables = w;
+                }
+                if session_active {
+                    ws.broadcast(ServerMessage::PitInfo(pit));
+                }
             }
 
             // --- weather forecast poll (0.2 Hz — every 5 s) ---
@@ -1480,6 +1493,7 @@ async fn main() -> Result<()> {
     let engineer_service = Arc::new(race_engineer::RaceEngineerService::new());
     let game_status_rx = connection_status_rx.clone();
     let (hub_tx, hub_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (strategy_tx, strategy_rx) = tokio::sync::mpsc::unbounded_channel();
     let ws    = Arc::new(WebSocketServer::new(
         port,
         all_drivers_rx,
@@ -1488,7 +1502,12 @@ async fn main() -> Result<()> {
         engineer_service.clone(),
         access.clone(),
         config.hub.then_some(hub_tx),
+        strategy_tx,
     ));
+
+    // Strategy engine: reads the broadcast stream (this bridge's, a replay's,
+    // or on a hub the relayed driver's) and adds the plan to it.
+    tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx));
 
     // Optional recorder: one more subscriber on the broadcast channel.
     if let Some(path) = config.record.clone() {

@@ -71,6 +71,8 @@ pub struct WebSocketServer {
     access: Arc<Access>,
     /// Where hub commands go; `None` on an ordinary bridge.
     hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
+    /// Where strategy settings go.
+    strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
 }
 
 impl WebSocketServer {
@@ -82,6 +84,7 @@ impl WebSocketServer {
         engineer_service: Arc<RaceEngineerService>,
         access: Arc<Access>,
         hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
+        strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
     ) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (audio_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -98,6 +101,7 @@ impl WebSocketServer {
             engineer_service,
             access,
             hub_tx,
+            strategy_tx,
         }
     }
 
@@ -153,6 +157,7 @@ impl WebSocketServer {
             self.engineer_service.clone(),
             self.access.clone(),
             self.hub_tx.clone(),
+            self.strategy_tx.clone(),
         ));
     }
 }
@@ -176,6 +181,7 @@ async fn handle_client(
     engineer_service: Arc<RaceEngineerService>,
     access: Arc<Access>,
     hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
+    strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
 ) {
     // Default role is audio — this device plays engineer callouts.
     let mut is_audio = true;
@@ -382,6 +388,13 @@ async fn handle_client(
                                         "Client {} registered as {} (is_audio={})",
                                         peer, role, is_audio
                                     );
+                                    continue;
+                                }
+
+                                // Strategy settings: the engine answers with a
+                                // fresh StrategyUpdate to everyone.
+                                if let ClientCommand::StrategyConfig { config } = cmd {
+                                    let _ = strategy_tx.send(config);
                                     continue;
                                 }
 

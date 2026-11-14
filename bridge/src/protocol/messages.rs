@@ -256,6 +256,9 @@ pub enum ServerMessage {
         weather: WeatherData,
         session_laps: i32,
         session_minutes: f64,
+        /// `mSessionTimeRemaining`, seconds; `None` when the game has none.
+        #[serde(default)]
+        time_remaining: Option<f64>,
     },
 
     /// Low frequency: ~5Hz — electronics / driver aids (native telemetry)
@@ -467,6 +470,16 @@ pub enum ServerMessage {
         download_url: String,
         update_available: bool,
     },
+
+    // -----------------------------------------------------------------------
+    // Strategy (see `crate::strategy`)
+    // -----------------------------------------------------------------------
+    /// The game's pit-stop data for the player's car, every 2 s in a session:
+    /// fuel and VE in real units, pit work times, the game's stop estimate.
+    PitInfo(crate::pit_api::PitInfo),
+
+    /// The strategy plan, at every completed lap and every 2 s.
+    StrategyUpdate(Box<crate::strategy::StrategyReport>),
 
     // -----------------------------------------------------------------------
     // Hub mode (see `crate::hub`)
@@ -757,6 +770,12 @@ pub enum ClientCommand {
         #[serde(default)]
         mute_name: bool,
     },
+
+    // -----------------------------------------------------------------------
+    // Strategy
+    // -----------------------------------------------------------------------
+    /// Replace the strategy settings (reserve, stint limit, tyre limit, …).
+    StrategyConfig { config: crate::strategy::StrategyConfig },
 
     // -----------------------------------------------------------------------
     // Hub commands (answered only by a Pitwall started with --hub)

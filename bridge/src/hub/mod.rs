@@ -57,7 +57,8 @@ const RETRY_MAX: Duration = Duration::from_secs(5);
 /// Message types relayed from the followed bridge. Everything else a bridge
 /// sends is either its own business (heartbeats, version, engineer audio) or a
 /// reply to a command the hub never sent.
-const RELAYED: [&str; 7] = [
+const RELAYED: [&str; 8] = [
+    "PitInfo",
     "ConnectionStatus",
     "SessionInfo",
     "AllDriversUpdate",

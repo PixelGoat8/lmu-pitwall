@@ -51,7 +51,25 @@ pub fn fetch_strategy_ve(player_name: &str) -> Option<Vec<f64>> {
     imp::fetch_strategy_ve(player_name)
 }
 
+/// Wearables out of a RepairAndRefuel response already fetched, so one
+/// request serves both this and the strategy engine's `PitInfo`.
+pub fn wearables_from(json: &serde_json::Value) -> Option<WearablesSnapshot> {
+    let w = json.get("wearables")?;
+    let wheels = |v: Option<&serde_json::Value>| -> [f64; 4] {
+        v.and_then(|v| v.as_array())
+            .filter(|a| a.len() >= 4)
+            .map(|a| [0, 1, 2, 3].map(|i| a[i].as_f64().unwrap_or(-1.0)))
+            .unwrap_or([-1.0; 4])
+    };
+    Some(WearablesSnapshot {
+        aero_damage: w.get("body").and_then(|b| b.get("aero")).and_then(|v| v.as_f64()).unwrap_or(-1.0),
+        brake_wear: wheels(w.get("brakes")),
+        suspension_damage: wheels(w.get("suspension")),
+    })
+}
+
 /// Fetch wearables damage from RepairAndRefuel endpoint (blocking, 2 s timeout).
+#[allow(dead_code)]
 pub fn fetch_wearables() -> Option<WearablesSnapshot> {
     imp::fetch_wearables()
 }
