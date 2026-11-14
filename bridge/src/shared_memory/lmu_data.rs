@@ -63,7 +63,15 @@ assert_size!(rF2Wheel, 260);
 // Containers (SharedMemoryInterface.hpp: SharedMemoryObjectOut)
 // ---------------------------------------------------------------------------
 
-/// Per-event-type counters, bumped by the game as callbacks fire.
+/// The event queue: `SharedMemoryEvent events[SME_MAX]`.
+///
+/// **Not counters, despite the field names below.** The game's header calls it
+/// a "queue of events": each slot holds the *type* of one event that fired for
+/// the current frame (a `SME_*` value), and unused slots hold `SME_MAX` (16).
+/// Measured on LMU 1.4.2 — on track `[15, 11, 16, 16, …]` (FFB, telemetry
+/// update), and after leaving a session `[5, 16, 16, …]` (unload). The field
+/// names are kept from the first port because only the size matters to the
+/// layout; read the block through [`OFF_EVENTS`] and [`session_unloaded`].
 #[repr(C, packed(4))]
 #[derive(Clone, Copy)]
 pub struct LmuEvent {
@@ -171,6 +179,29 @@ assert_size!(LmuObjectOut, 324_820);
 
 use std::mem::offset_of;
 
+/// `generic.events[0]` — the event queue, [`EVENT_SLOTS`] × `u32`.
+pub const OFF_EVENTS: usize = offset_of!(LmuObjectOut, generic) + offset_of!(LmuGeneric, events);
+
+/// Slots in the event queue (`SME_MAX`).
+pub const EVENT_SLOTS: usize = 16;
+
+/// `SME_UNLOAD`: the session's content was unloaded (back to the menus).
+pub const SME_UNLOAD: u32 = 5;
+
+/// True when the event queue says the session was unloaded.
+///
+/// This matters because **LMU does not clear the mapping when a session
+/// ends**. Measured on 1.4.2: minutes after returning to the main menu,
+/// `mNumVehicles` was still 37, `playerHasVehicle` still 1 and every telemetry
+/// row still held its last value. Nothing writes to the mapping after the
+/// unload, so the queue keeps showing `SME_UNLOAD` until the next session
+/// starts — which makes it the one field that tells a finished session from a
+/// live one. Without this check the bridge serves a ghost session, and a hub
+/// following several drivers would believe one of them is still on track.
+pub fn session_unloaded(events: &[u32; EVENT_SLOTS]) -> bool {
+    events.contains(&SME_UNLOAD)
+}
+
 /// `generic.gameVersion`.
 pub const OFF_GAME_VERSION: usize =
     offset_of!(LmuObjectOut, generic) + offset_of!(LmuGeneric, gameVersion);
@@ -223,6 +254,7 @@ mod tests {
     fn offsets_land_inside_the_mapping() {
         let size = std::mem::size_of::<LmuObjectOut>();
         for (name, off, len) in [
+            ("events", OFF_EVENTS, 4 * EVENT_SLOTS),
             ("gameVersion", OFF_GAME_VERSION, 4),
             ("scoringInfo", OFF_SCORING_INFO, std::mem::size_of::<rF2ScoringInfo>()),
             ("mCurrentET", OFF_SCORING_ET, 8),
@@ -259,6 +291,30 @@ mod tests {
         assert!(OFF_ACTIVE_VEHICLES < OFF_TELEM_INFO);
         assert_eq!(OFF_PLAYER_IDX, OFF_ACTIVE_VEHICLES + 1);
         assert_eq!(OFF_PLAYER_HAS_VEHICLE, OFF_ACTIVE_VEHICLES + 2);
+    }
+
+    /// The queue is the first thing in the mapping and exactly fills
+    /// `LmuEvent`, so reading 16 × u32 at `OFF_EVENTS` stays inside it.
+    #[test]
+    fn event_queue_is_the_first_block() {
+        assert_eq!(OFF_EVENTS, 0);
+        assert_eq!(4 * EVENT_SLOTS, std::mem::size_of::<LmuEvent>());
+    }
+
+    /// The two queues actually observed on LMU 1.4.2, plus an empty one.
+    #[test]
+    fn unload_is_recognised_in_the_event_queue() {
+        let mut after_exit = [16u32; EVENT_SLOTS];
+        after_exit[0] = SME_UNLOAD;
+        assert!(session_unloaded(&after_exit));
+
+        let mut on_track = [16u32; EVENT_SLOTS];
+        on_track[0] = 15; // SME_FFB
+        on_track[1] = 11; // SME_UPDATE_TELEMETRY
+        assert!(!session_unloaded(&on_track));
+
+        assert!(!session_unloaded(&[16u32; EVENT_SLOTS]));
+        assert!(!session_unloaded(&[0u32; EVENT_SLOTS]));
     }
 
     /// LMU maps 104 slots. The plugin mapped 128, and its constant used to live

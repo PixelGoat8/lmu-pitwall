@@ -272,6 +272,12 @@ pub enum ServerMessage {
         telemetry_valid: bool,
         /// Human-readable reason, present only when `telemetry_valid` is false.
         telemetry_warning: Option<String>,
+        /// `true` while a session is loaded and the game is writing to it.
+        /// `false` in the menus — including after leaving a session, when the
+        /// shared memory still holds that session's last frame. While `false`
+        /// the bridge sends no telemetry or scoring, and clients must drop
+        /// what they were showing.
+        session_active: bool,
     },
 
     /// Sent to every client every 2 s, session or not. Lets the dashboard

@@ -299,6 +299,15 @@ mod imp {
         /// land inside the copy. Callers should keep their previous frame in
         /// that case rather than treating it as a disconnect — a torn read is a
         /// skipped update, not a lost game.
+        /// True when the game reports the session as unloaded: what is in
+        /// the mapping is then the *last* session, not a live one. See
+        /// [`session_unloaded`](crate::shared_memory::lmu_data::session_unloaded).
+        pub fn session_unloaded(&self) -> bool {
+            let Some(buf) = self.lmu.as_ref() else { return false };
+            let events: [u32; EVENT_SLOTS] = unsafe { buf.at(OFF_EVENTS) };
+            session_unloaded(&events)
+        }
+
         pub fn read_frame(&self) -> Option<SharedMemoryFrame> {
             let buf = self.lmu.as_ref()?;
 
@@ -376,6 +385,10 @@ mod imp {
 
         pub fn game_version(&self) -> Option<String> {
             None
+        }
+
+        pub fn session_unloaded(&self) -> bool {
+            false
         }
 
         pub fn read_frame(&self) -> Option<SharedMemoryFrame> {

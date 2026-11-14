@@ -529,6 +529,8 @@ async fn task_polling(
 ) {
     let mut reader = SharedMemoryReader::new();
     let mut was_connected = false;
+    // Whether a session is loaded and live (see the ghost-session guard below).
+    let mut session_active = false;
 
     // Plugin version string, read from shared memory on connect.
     // Reported to the dashboard as `plugin_version` for protocol compatibility;
@@ -601,6 +603,45 @@ async fn task_polling(
                     None => (None, None),
                 };
 
+                // Ghost-session guard. LMU leaves the last session's data in
+                // the mapping after unloading it, so "there are cars in the
+                // buffer" does not mean "there is a session". A session is
+                // live only while the game has not flagged an unload and the
+                // field is not empty. A torn read (no frame) keeps the
+                // previous verdict rather than flickering.
+                let unloaded = reader.session_unloaded();
+                let now_active = match &sc {
+                    Some(s) => !unloaded && !s.mVehicles.is_empty(),
+                    None => session_active && !unloaded,
+                };
+                if now_active != session_active {
+                    session_active = now_active;
+                    if now_active {
+                        info!("Session loaded — streaming");
+                    } else {
+                        info!("Session unloaded — dropping its data");
+                        let mut s = state.write().await;
+                        s.telemetry = None;
+                        s.scoring = None;
+                        s.ve_history = None;
+                        s.ve_available = None;
+                        s.wearables = garage_api::WearablesSnapshot::default();
+                        s.weather_forecast = Vec::new();
+                    }
+                    let msg = ServerMessage::ConnectionStatus {
+                        game_connected: true,
+                        plugin_version: game_version.clone(),
+                        telemetry_valid: telemetry_warning.is_none(),
+                        telemetry_warning: telemetry_warning.clone(),
+                        session_active,
+                    };
+                    ws.broadcast(msg.clone());
+                    let _ = connection_status_tx.send(Some(msg));
+                }
+                if !session_active {
+                    continue;
+                }
+
                 // Build electronics snapshot directly from telemetry.
                 let player_id_from_sc = sc.as_ref().and_then(|s| {
                     s.player().map(|v| v.mID)
@@ -657,6 +698,7 @@ async fn task_polling(
                         plugin_version: game_version.clone(),
                         telemetry_valid: new_warning.is_none(),
                         telemetry_warning: new_warning,
+                        session_active,
                     };
                     ws.broadcast(msg.clone());
                     let _ = connection_status_tx.send(Some(msg));
@@ -796,11 +838,15 @@ async fn task_polling(
                             .unwrap_or_else(|| String::from("unknown"));
                         info!("Le Mans Ultimate version: {}", game_version);
                         telemetry_warning = None;
+                        // Not active yet: the next poll decides, and
+                        // announces it, once it has looked at the mapping.
+                        session_active = false;
                         let msg = ServerMessage::ConnectionStatus {
                             game_connected: true,
                             plugin_version: game_version.clone(),
                             telemetry_valid: true,
                             telemetry_warning: None,
+                            session_active: false,
                         };
                         ws.broadcast(msg.clone());
                         let _ = connection_status_tx.send(Some(msg));
@@ -812,11 +858,13 @@ async fn task_polling(
                         warn!("Lost connection to Le Mans Ultimate — waiting for reconnect");
                         game_version.clear();
                         telemetry_warning = None;
+                        session_active = false;
                         let msg = ServerMessage::ConnectionStatus {
                             game_connected: false,
                             plugin_version: String::new(),
                             telemetry_valid: true,
                             telemetry_warning: None,
+                            session_active: false,
                         };
                         ws.broadcast(msg.clone());
                         let _ = connection_status_tx.send(Some(msg));
@@ -1383,6 +1431,7 @@ async fn main() -> Result<()> {
                 plugin_version: String::new(),
                 telemetry_valid: true,
                 telemetry_warning: None,
+                session_active: false,
             },
         ));
 
