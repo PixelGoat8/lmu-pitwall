@@ -193,3 +193,45 @@ the current one while it has a session; else any with a session.
 One JSON object per line: `{"t": <ms since start>, "m": "<base64 MessagePack>"}`
 as written by `--record`, or `{"t": …, "j": {…message as JSON…}}` for
 hand-made files. `--replay` accepts both; lines starting with `#` are ignored.
+
+## Additions in this fork's phase 4
+
+### `SessionInfo.time_remaining`
+
+f64 | null: `mSessionTimeRemaining` in seconds.
+
+### `PitInfo` (every 2 s in a session)
+
+The game's pit data for the player's car, from `/rest/garage/UIScreen/RepairAndRefuel`
+and `/rest/strategy/pitstop-estimate`; relayed by a hub.
+
+| Field | Notes |
+|---|---|
+| `fuel`, `fuel_capacity` | litres |
+| `ve` | fraction 0–1, `null` for cars without virtual energy |
+| `times` | `fuel_fill_rate` (L/s), `fuel_insert_s`, `fuel_concurrent`, `ve_fill_rate` (fraction/s), `ve_insert_s`, `ve_concurrent`, `four_tyres_s`, `two_tyres_s`, `tyres_concurrent`, `driver_change_s`, `driver_concurrent` |
+| `estimate` | the game's stationary-time estimate for the menu as set: `total`, `fuel`, `ve`, `tires`, `driver_swap`, `damage`, `penalties` |
+| `menu_ve`, `menu_fuel` | the pit menu's VE setting (fraction) and fuel line text |
+| `recommended_fuel`, `recommended_ve` | the game's recommendation, as sent |
+
+### `StrategyUpdate` (every completed lap and every 2 s)
+
+Produced by the strategy engine of the bridge or hub the client is connected
+to. Main fields: `horizon` (`laps_to_go`, `basis`, `time_remaining_s`), `pace`
+(`ref_lap_s`, `clean_laps`, `stat`), `fuel` and `ve` (`now`, `capacity`,
+`per_lap` stats, `planning_per_lap`, `reserve`, `laps_left`,
+`needed_to_finish`, `to_add`, `stint_laps_max`, `stops`; VE values are
+fractions), `plan` (`stops`, `limiting`, `stint_laps_max`, `range_laps`,
+`window`), `what_if[]` (`in_laps`, `pit_lap`, `reachable`, `fuel_add`,
+`ve_add`, `stops_after`, `stationary_s`, `stop_cost_s`), `tyres`,
+`tyre_choice`, `stint`, `pit_loss` (`lane_loss_s`, `source`, `samples`,
+`game_estimate`), `weather`, `notes[]`, `config`. See
+`bridge/src/strategy/mod.rs` for the exact shape. Figures that cannot be
+computed are `null`; `notes` says why.
+
+### Command `strategy_config`
+
+`{"command":"strategy_config","config":{"reserve_laps":0.5,"max_stint_minutes":null,"tyre_wear_limit":0.3,"change_tyres":false,"pit_lane_loss_s":null}}`
+
+Replaces the settings; the engine answers with a `StrategyUpdate` to every
+client. Allowed from remote clients.

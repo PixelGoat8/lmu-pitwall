@@ -14,7 +14,8 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > | 1. Analysis of the code and of LMU's data sources | done: [docs/analisi-fase1.md](docs/analisi-fase1.md) (Italian), [docs/lmu-api.md](docs/lmu-api.md) |
 > | 2. Remote access: token, reconnects, no shutdown mid-race | done: [docs/accesso-remoto.md](docs/accesso-remoto.md) (Italian) |
 > | 3. Multi-driver hub, stint history, record/replay; class gaps, tyre status, fuel calculator auto-select | done: [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md) (Italian) |
-> | 4–8. Strategy engine, timing, history, AI comments, driver coaching | planned |
+> | 4. Live strategy engine: consumption, stops, pit window, "box in N laps", tyres, pit lane loss, weather | done: [docs/strategia.md](docs/strategia.md) (Italian) |
+> | 5–8. Timing and race events, history, AI comments, driver coaching | planned |
 
 ## Hub: one dashboard for a team of drivers
 
@@ -111,7 +112,7 @@ The dashboard auto-connects and updates in real time. On first run, Windows Fire
 | **Gaps (class)** | Gap to the cars one place ahead and behind in your class, and whether each is closing or growing lap over lap |
 | **Team & Stints** | Hub mode only: the drivers' PCs, who is on screen, and the stint history |
 | **Race Engineer** | Spoken callouts during practice, qualifying, and race: tire wear warnings, weather escalations, pace deltas, fuel status, flag alerts |
-| **Strategy** | Virtual Energy (VE) per lap from LMU REST API; Fuel Calculator for multi-stint planning, preselecting the track and car of the session in progress |
+| **Strategy** | Live plan recomputed every lap: fuel and virtual energy use (median, trend), laps to go, energy to the finish, stops and pit window, a "box in N laps" table with amounts and stop time from the game's own pit times, tyre wear and pace trend with the new-tyres trade-off, pit lane loss measured per track, rain outlook from the forecast. Works on a hub across driver swaps. Plus the Fuel Calculator for pre-race planning, preselecting the track and car of the session in progress |
 | **Track Map** | Live positions of the whole field, drawn smoothly at your display's refresh rate, on an outline recorded from one clean lap. Sector segments with start/finish and sector lines, local yellows on the sector they apply to, track and sector lengths, elevation range, climb per lap and an elevation profile |
 | **Weather** | Current and forecast conditions |
 | **Inputs** | Throttle, brake, and steering trace |
