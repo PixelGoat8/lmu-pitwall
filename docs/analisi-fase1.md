@@ -54,25 +54,52 @@ Ci sono 70 test Rust e il tool `tools/lmu-probe`, che verifica il layout della s
 
 ## Le tre verifiche richieste
 
-Il gioco **non è installato** su questo PC: Steam ha il download in coda
-(`SizeOnDisk 0`, 48 GB da scaricare). Le risposte qui sotto vengono quindi dal codice
-upstream, che è stato misurato su LMU 1.4, e non da test miei.
+Misurate il 2026-11-14 su LMU 1.4.2, in una sessione offline di prove a Monza
+(37 auto, Hypercar + LMP2 + GTE, 3 giri guidati). Dettagli e campioni in
+[lmu-api.md](lmu-api.md).
 
-1. **Altri piloti: solo scoring o anche telemetria?** Anche telemetria, ma parziale.
-   Ogni auto ha la sua riga di telemetria (104 slot). Sono reali la posizione a 100 Hz e
-   `mVirtualEnergy`. `mFuel` (fisso a metà serbatoio) e `mWear` (fisso a 1.0) sono
-   segnaposto. Pedali, temperature gomme e freni degli altri: **da verificare**
-   (`lmu-probe` run C, offline e online).
-2. **Da spettatore/engineer vedo la telemetria della macchina del team?** Quasi
-   certamente **no**. La macchina del team sarebbe un'auto "non nostra", quindi carburante
-   e usura avrebbero i segnaposto del punto 1. Inoltre `playerHasVehicle` sarà 0. Il bridge
-   sui PC dei piloti resta necessario per carburante, gomme, elettronica e coaching. Da
-   confermare entrando come spettatore in una sessione.
-3. **Meteo e VE dove?** Il meteo attuale è nella shared memory (scoring); la previsione
-   (5 nodi) è solo REST `/rest/sessions/weather`. La VE dal vivo è nella shared memory
-   (`mVirtualEnergy`, per tutte le auto); lo storico VE per giro è su REST
-   `/rest/strategy/usage`; la capacità VE su REST `RepairAndRefuel.fuelInfo`.
-   Dettagli in [lmu-api.md](lmu-api.md).
+1. **Altri piloti: solo scoring o anche telemetria?** Anche telemetria, e
+   offline contro l'AI è molto ricca:
+   - reali: posizione, velocità, **pedali, sterzo, marcia, giri motore**,
+     **carburante**, **usura gomme**, **temperatura freni**, e VE e batteria
+     per le Hypercar;
+   - non pubblicati (sempre 0): temperature e pressioni gomme, elettronica
+     (TC, ABS, mappa).
+
+   **Attenzione:** l'autore upstream ha misurato online carburante fisso a metà
+   serbatoio e usura fissa a 1.0 per le altre auto. Online il gioco pubblica
+   quindi meno dati. Va rimisurato in una sessione online.
+2. **Da spettatore/engineer vedo la telemetria della macchina del team?**
+   **Non ancora verificato**: serve una sessione online. Due indizi:
+   - offline la telemetria delle altre auto c'è, quindi non è escluso;
+   - online upstream ha visto valori fissi per carburante e usura delle altre auto.
+
+   Finché non è misurato, il progetto assume che serva il bridge sul PC di chi guida.
+3. **Meteo e VE dove?**
+   - Meteo attuale: shared memory (scoring), e anche REST `RepairAndRefuel.currentWeather`.
+   - Previsione (5 nodi): solo REST, `/rest/sessions/weather`.
+   - VE dal vivo: shared memory `mVirtualEnergy` (tutte le auto con VE).
+   - Storico per giro: REST `/rest/strategy/usage`, per **tutti** i piloti
+     (VE, stint, pit); per la propria auto anche carburante e usura gomme.
+
+### Scoperte utili per le fasi successive
+
+- **`RepairAndRefuel` contiene il modello della sosta**: velocità di
+  rifornimento carburante e VE, tempi di cambio gomme (12 s per quattro) e
+  cambio pilota (25 s), cosa avviene in parallelo. `/rest/strategy/pitstop-estimate`
+  dà il tempo da fermo della sosta pianificata, voce per voce. La strategia
+  (fase 4) può usare questi numeri del gioco; resta da misurare solo il tempo
+  di percorrenza della pit lane per pista.
+- **`teamInfo.driverNames`** elenca i piloti dell'auto: utile per il multi-pilota.
+- **Dati fantasma dopo l'uscita dalla sessione**: tornati al menu, la shared
+  memory conserva l'ultimo frame (37 auto, `playerHasVehicle` = 1). L'unico
+  segnale è l'evento `SME_UNLOAD` e il clock fermo. Il bridge upstream non
+  guarda gli eventi: va corretto, altrimenti l'hub crederebbe che un pilota
+  sia ancora in pista.
+- **Segnale "nuovo frame" e lock** nell'header 1.4.2: permettono di leggere
+  tutti i frame a 100 Hz senza copie incoerenti (serve al coaching).
+- Il layout della shared memory coincide con gli header ufficiali; i 90 campi
+  letti dal bridge sono tutti plausibili; 0 letture incoerenti su 4207.
 
 ## Proposta per le fasi 2–3
 
@@ -95,12 +122,17 @@ Modifiche al bridge già previste per la fase 2:
 - token richiesto su WS e HTTP, e `/api/shutdown` / `set-port` solo da localhost;
 - heartbeat ping/pong, backoff massimo di 5 s e snapshot completo alla riconnessione.
 
-## Prerequisiti mancanti su questo PC
 
-- **LMU**: completare il download in Steam (≈48 GB) e attivare
-  *Settings → Gameplay → Enable Plugins*.
-- **Rust** (rustup, target MSVC) e **Node.js LTS**: assenti. La build upstream è pensata
-  per Linux; qui compilerò nativamente per Windows.
-- **Fork su GitHub**: `gh` non è installato. Il remote `origin` punta già a
-  `github.com/pixelgoat8/lmu-pitwall`: basta cliccare *Fork* su GitHub (oppure installare
-  `gh` e fare login) prima del primo push.
+## Ambiente di sviluppo su questo PC
+
+Installati con winget: Rust 1.100 (toolchain MSVC), Node.js 26, Visual Studio
+Build Tools 2022 (C++). La build upstream è pensata per Linux
+(`cargo zigbuild`); qui frontend e bridge compilano in nativo su Windows e i
+70 test del bridge passano.
+
+## Ancora da verificare con il gioco
+
+1. Sessione online: dati delle altre auto (carburante, usura, pedali).
+2. Spettatore/engineer: telemetria e REST dell'auto del team.
+3. Cambio pilota: `mControl`, `mIsPlayer` e chiave di `/rest/strategy/usage`.
+4. Pioggia e previsione con meteo accelerato.

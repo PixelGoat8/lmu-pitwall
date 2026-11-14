@@ -40,14 +40,19 @@ foreach ($ep in $endpoints) {
     $file = Join-Path $outDir (($ep.TrimStart('/') -replace '[/\\]', '_') + ".json")
     try {
         $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 3
-        [System.IO.File]::WriteAllText($file, $r.Content)
+        # The API sends UTF-8 without a charset header, and Windows PowerShell
+        # then decodes .Content as Latin-1 (driver names turn to mojibake).
+        # Save the raw bytes and decode them ourselves.
+        $bytes = $r.RawContentStream.ToArray()
+        [System.IO.File]::WriteAllBytes($file, $bytes)
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
         $keys = ""
         try {
-            $j = $r.Content | ConvertFrom-Json
+            $j = $text | ConvertFrom-Json
             if ($j -is [System.Array]) { $keys = "array[$($j.Count)]" }
             elseif ($j) { $keys = ($j.PSObject.Properties.Name | Select-Object -First 25) -join ", " }
         } catch { $keys = "(not JSON)" }
-        $summary += "{0,-48} {1}  {2,8} B  {3}" -f $ep, $r.StatusCode, $r.Content.Length, $keys
+        $summary += "{0,-48} {1}  {2,8} B  {3}" -f $ep, $r.StatusCode, $bytes.Length, $keys
     } catch {
         $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { "ERR" }
         $summary += "{0,-48} {1}  {2}" -f $ep, $code, $_.Exception.Message
