@@ -31,6 +31,11 @@ pub struct Config {
     #[arg(long)]
     pub token: Option<String>,
 
+    /// Run as the engineer's hub: follow several drivers' bridges instead of
+    /// reading the game on this PC (default port 9100)
+    #[arg(long, default_value_t = false)]
+    pub hub: bool,
+
     /// Record everything the bridge broadcasts to this file (.pwrec)
     #[arg(long, value_name = "FILE")]
     pub record: Option<std::path::PathBuf>,

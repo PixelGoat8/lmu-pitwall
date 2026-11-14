@@ -10,6 +10,7 @@ mod fuel;
 mod fuel_calculator;
 mod garage_api;
 mod http_server;
+mod hub;
 mod idle;
 mod lap_tracker;
 mod post_race;
@@ -1337,7 +1338,13 @@ async fn task_broadcaster(
 async fn main() -> Result<()> {
     let config = Config::parse();
     let app_cfg = crate::app_config::AppConfig::load_or_create();
-    let port: u16 = config.ws_port.or(app_cfg.port).unwrap_or(9000);
+    // A hub has its own default port so it can run beside a bridge on the
+    // same PC; the port saved in config.json belongs to the bridge.
+    let port: u16 = if config.hub {
+        config.ws_port.unwrap_or(hub::DEFAULT_PORT)
+    } else {
+        config.ws_port.or(app_cfg.port).unwrap_or(9000)
+    };
 
     // Single-instance guard: if the port already responds, check whether it is
     // the same version or an older one.
@@ -1472,6 +1479,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(RwLock::new(TelemetryState::new()));
     let engineer_service = Arc::new(race_engineer::RaceEngineerService::new());
     let game_status_rx = connection_status_rx.clone();
+    let (hub_tx, hub_rx) = tokio::sync::mpsc::unbounded_channel();
     let ws    = Arc::new(WebSocketServer::new(
         port,
         all_drivers_rx,
@@ -1479,6 +1487,7 @@ async fn main() -> Result<()> {
         connection_status_rx,
         engineer_service.clone(),
         access.clone(),
+        config.hub.then_some(hub_tx),
     ));
 
     // Optional recorder: one more subscriber on the broadcast channel.
@@ -1487,10 +1496,15 @@ async fn main() -> Result<()> {
         tokio::spawn(recording::record(path, rx));
     }
 
-    // Replay mode: a recorded session stands in for the game. The two tasks
-    // that read LMU are simply not started.
+    // Hub mode: the drivers' bridges stand in for the game.
+    let (hub_busy_tx, hub_busy_rx) = watch::channel(false);
+    // Replay mode: a recorded session stands in for the game. Either way the
+    // two tasks that read LMU are simply not started.
     let replaying = config.replay.is_some();
-    if let Some(path) = config.replay.clone() {
+    if config.hub {
+        info!("Running as a hub on port {}", port);
+        tokio::spawn(hub::run(ws.clone(), hub_rx, connection_status_tx, all_drivers_tx, hub_busy_tx));
+    } else if let Some(path) = config.replay.clone() {
         let rec = match recording::Recording::load(&path) {
             Ok(r) => r,
             Err(e) => {
@@ -1598,7 +1612,10 @@ async fn main() -> Result<()> {
         let count_rx = ws.client_count_rx();
 
         // The game's state as a plain bool, derived from ConnectionStatus.
+        // A hub has no game of its own: it is busy while any of its bridges
+        // has a live session.
         let (game_tx, game_rx) = watch::channel(false);
+        let game_rx = if config.hub { hub_busy_rx } else { game_rx };
         let mut status_rx = game_status_rx;
         tokio::spawn(async move {
             loop {

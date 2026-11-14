@@ -468,6 +468,29 @@ pub enum ServerMessage {
         update_available: bool,
     },
 
+    // -----------------------------------------------------------------------
+    // Hub mode (see `crate::hub`)
+    // -----------------------------------------------------------------------
+    /// The bridges a hub is connected to and which one it is following.
+    /// Sent every second and on every change. Only a hub sends it; its
+    /// presence is how a dashboard knows it is talking to one.
+    HubStatus {
+        sources: Vec<HubSourceStatus>,
+        /// Bridge whose stream is being relayed right now.
+        active_id: Option<String>,
+        /// Bridge pinned by the engineer; `None` = follow the driver.
+        follow: Option<String>,
+    },
+
+    /// Stint history of the followed car, oldest first.
+    HubStints {
+        stints: Vec<HubStintInfo>,
+    },
+
+    HubError {
+        message: String,
+    },
+
     /// A message relayed as-is, without being decoded into one of the
     /// variants above: a frame from a recording, or (in hub mode) from another
     /// bridge. Serialized as the wrapped value itself, so on the wire it is
@@ -475,6 +498,56 @@ pub enum ServerMessage {
     /// bridge version that knows message types this one does not.
     #[serde(untagged)]
     Raw(rmpv::Value),
+}
+
+/// One bridge as a hub sees it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubSourceStatus {
+    pub id: String,
+    pub label: String,
+    /// Address of the bridge, without the token.
+    pub host: String,
+    /// "connecting", "connected", "unauthorized" or "unreachable".
+    pub link: String,
+    pub game_connected: bool,
+    pub session_active: bool,
+    /// Who is playing on that PC.
+    pub pc_player: String,
+    /// Who the game says is driving that PC's car right now.
+    pub driver_name: String,
+    /// `mControl` of that car as that PC sees it; `None` if unknown.
+    pub control: Option<i8>,
+    /// That PC is the one driving (`control == 0`).
+    pub driving: bool,
+    pub in_pits: bool,
+    /// Milliseconds since the bridge last sent anything; `None` if never.
+    pub last_frame_age_ms: Option<u64>,
+}
+
+/// One stint in a hub's history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubStintInfo {
+    pub number: u32,
+    pub driver: String,
+    /// Label of the bridge the data came from.
+    pub source: String,
+    /// Session time (s) at the start; at the end, or `None` while running.
+    pub start_time: f64,
+    pub end_time: Option<f64>,
+    pub start_lap: i32,
+    pub end_lap: i32,
+    /// Laps completed in the stint.
+    pub laps: u32,
+    pub best_lap: Option<f64>,
+    /// Average lap, out-lap excluded when the stint has three laps or more.
+    pub avg_lap: Option<f64>,
+    pub last_lap: Option<f64>,
+    /// Litres. Only readings taken while that PC was driving.
+    pub fuel_start: Option<f64>,
+    pub fuel_end: Option<f64>,
+    /// Virtual energy fraction 0–1; `None` for cars without it.
+    pub ve_start: Option<f64>,
+    pub ve_end: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -683,6 +756,22 @@ pub enum ClientCommand {
         pilot_name: Option<String>,
         #[serde(default)]
         mute_name: bool,
+    },
+
+    // -----------------------------------------------------------------------
+    // Hub commands (answered only by a Pitwall started with --hub)
+    // -----------------------------------------------------------------------
+    /// Add a driver's bridge from the link its dashboard shows.
+    HubAddSource {
+        link: String,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    HubRemoveSource { id: String },
+    /// Pin the hub to one bridge, or `id: null` to follow the driver.
+    HubFollow {
+        #[serde(default)]
+        id: Option<String>,
     },
 
     // -----------------------------------------------------------------------

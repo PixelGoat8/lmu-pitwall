@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 
 use crate::access::{self, Access, Level};
 use crate::fuel_calculator::api::handle_command as fuel_handle;
+use crate::hub::HubCommand;
 use crate::post_race::api::handle_command as post_race_handle;
 use crate::protocol::messages::{ClientCommand, ServerMessage};
 use crate::race_engineer::{self, RaceEngineerService};
@@ -68,6 +69,8 @@ pub struct WebSocketServer {
     connection_status_rx: watch::Receiver<Option<ServerMessage>>,
     engineer_service: Arc<RaceEngineerService>,
     access: Arc<Access>,
+    /// Where hub commands go; `None` on an ordinary bridge.
+    hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
 }
 
 impl WebSocketServer {
@@ -78,6 +81,7 @@ impl WebSocketServer {
         connection_status_rx: watch::Receiver<Option<ServerMessage>>,
         engineer_service: Arc<RaceEngineerService>,
         access: Arc<Access>,
+        hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
     ) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (audio_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -93,6 +97,7 @@ impl WebSocketServer {
             connection_status_rx,
             engineer_service,
             access,
+            hub_tx,
         }
     }
 
@@ -147,6 +152,7 @@ impl WebSocketServer {
             self.audio_tx.clone(),
             self.engineer_service.clone(),
             self.access.clone(),
+            self.hub_tx.clone(),
         ));
     }
 }
@@ -169,6 +175,7 @@ async fn handle_client(
     _audio_broadcaster: broadcast::Sender<Arc<ServerMessage>>,
     engineer_service: Arc<RaceEngineerService>,
     access: Arc<Access>,
+    hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
 ) {
     // Default role is audio — this device plays engineer callouts.
     let mut is_audio = true;
@@ -375,6 +382,25 @@ async fn handle_client(
                                         "Client {} registered as {} (is_audio={})",
                                         peer, role, is_audio
                                     );
+                                    continue;
+                                }
+
+                                // Hub commands go to the hub coordinator, which
+                                // answers by broadcasting the new HubStatus.
+                                if let Some(hub_cmd) = HubCommand::from_client(&cmd) {
+                                    match &hub_tx {
+                                        Some(tx) => {
+                                            let _ = tx.send(hub_cmd);
+                                        }
+                                        None => {
+                                            let refusal = ServerMessage::HubError {
+                                                message: "This Pitwall is not running as a hub (start it with --hub).".into(),
+                                            };
+                                            if let Ok(ws_msg) = serialize(&refusal, fmt) {
+                                                let _ = sink.send(ws_msg).await;
+                                            }
+                                        }
+                                    }
                                     continue;
                                 }
 
