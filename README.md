@@ -15,7 +15,10 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > | 2. Remote access: token, reconnects, no shutdown mid-race | done: [docs/accesso-remoto.md](docs/accesso-remoto.md) (Italian) |
 > | 3. Multi-driver hub, stint history, record/replay; class gaps, tyre status, fuel calculator auto-select | done: [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md) (Italian) |
 > | 4. Live strategy engine: consumption, stops, pit window, "box in N laps", tyres, pit lane loss, weather | done: [docs/strategia.md](docs/strategia.md) (Italian) |
-> | 5–8. Timing and race events, history, AI comments, driver coaching | planned |
+> | 5. Timing and race events (rivals, faster cars and blue flags, FCY/SC/penalties log), touch layout and installable PWA for tablets | next |
+> | 6. AI engineer comments (Anthropic API) on the computed state only | planned |
+> | 7. Session history in SQLite for post-race analysis and stint comparison | planned |
+> | Extra. Driver coaching: per-corner metrics, lift & coast, reference lap comparison | optional |
 
 ## Hub: one dashboard for a team of drivers
 
