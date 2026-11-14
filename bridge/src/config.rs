@@ -31,6 +31,22 @@ pub struct Config {
     #[arg(long)]
     pub token: Option<String>,
 
+    /// Record everything the bridge broadcasts to this file (.pwrec)
+    #[arg(long, value_name = "FILE")]
+    pub record: Option<std::path::PathBuf>,
+
+    /// Serve a recorded session instead of reading the game (no LMU needed)
+    #[arg(long, value_name = "FILE")]
+    pub replay: Option<std::path::PathBuf>,
+
+    /// Playback speed for --replay (2 = twice as fast)
+    #[arg(long, default_value_t = 1.0)]
+    pub replay_speed: f64,
+
+    /// With --replay: stop at the end instead of starting over
+    #[arg(long, default_value_t = false)]
+    pub replay_once: bool,
+
     /// Never exit on idle (default: exit after 10 minutes with no client and no game)
     #[arg(long, default_value_t = false)]
     pub keep_alive: bool,

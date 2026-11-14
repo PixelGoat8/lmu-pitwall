@@ -33,6 +33,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
 bitflags = "2"
 rand = "0.8"
+rmpv = { version = "1", features = ["with-serde"] }
 
 [dev-dependencies]
 tempfile = "3"

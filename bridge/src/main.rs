@@ -15,6 +15,7 @@ mod lap_tracker;
 mod post_race;
 mod protocol;
 mod race_engineer;
+mod recording;
 mod rest_api;
 mod shared_memory;
 mod websocket;
@@ -1447,6 +1448,32 @@ async fn main() -> Result<()> {
         access.clone(),
     ));
 
+    // Optional recorder: one more subscriber on the broadcast channel.
+    if let Some(path) = config.record.clone() {
+        let rx = ws.broadcaster().subscribe();
+        tokio::spawn(recording::record(path, rx));
+    }
+
+    // Replay mode: a recorded session stands in for the game. The two tasks
+    // that read LMU are simply not started.
+    let replaying = config.replay.is_some();
+    if let Some(path) = config.replay.clone() {
+        let rec = match recording::Recording::load(&path) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Cannot replay: {:#}", e);
+                return Err(e);
+            }
+        };
+        tokio::spawn(recording::replay(
+            rec,
+            config.replay_speed,
+            !config.replay_once,
+            ws.broadcaster(),
+            connection_status_tx,
+            all_drivers_tx,
+        ));
+    } else {
     // Task 1 + 3: Shared memory polling + health check
     {
         let state = state.clone();
@@ -1466,6 +1493,7 @@ async fn main() -> Result<()> {
             task_broadcaster(state, ws, tel_fps, scoring_fps, all_drivers_tx, engineer_svc).await
         });
     }
+    } // end of live (non-replay) tasks
 
     // Combined HTTP + WebSocket server
     {
@@ -1531,8 +1559,9 @@ async fn main() -> Result<()> {
     }
 
     // Idle shutdown: exit after a grace period with no client and no game
-    // (see `idle`). `--keep-alive` turns it off.
-    if !config.keep_alive {
+    // (see `idle`). `--keep-alive` turns it off, and a replay never idles out:
+    // it is a development tool, started and stopped by hand.
+    if !config.keep_alive && !replaying {
         let count_rx = ws.client_count_rx();
 
         // The game's state as a plain bool, derived from ConnectionStatus.

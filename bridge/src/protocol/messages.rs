@@ -414,6 +414,14 @@ pub enum ServerMessage {
         download_url: String,
         update_available: bool,
     },
+
+    /// A message relayed as-is, without being decoded into one of the
+    /// variants above: a frame from a recording, or (in hub mode) from another
+    /// bridge. Serialized as the wrapped value itself, so on the wire it is
+    /// indistinguishable from the message it carries — which may come from a
+    /// bridge version that knows message types this one does not.
+    #[serde(untagged)]
+    Raw(rmpv::Value),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
