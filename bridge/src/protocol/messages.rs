@@ -274,6 +274,13 @@ pub enum ServerMessage {
         telemetry_warning: Option<String>,
     },
 
+    /// Sent to every client every 2 s, session or not. Lets the dashboard
+    /// tell a quiet bridge from a dead link; carries nothing else.
+    Heartbeat {
+        /// Bridge wall clock, Unix milliseconds.
+        server_time_ms: u64,
+    },
+
     /// All-drivers lap snapshot — sent when any car crosses the S/F line,
     /// and once immediately on client connect as initial state.
     /// Contains the latest snapshot per driver (updated at each S/F crossing).

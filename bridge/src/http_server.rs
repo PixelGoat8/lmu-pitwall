@@ -14,11 +14,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
 
+use crate::access::{self, Access, Level};
 use crate::assets::Asset;
 use crate::websocket::server::WebSocketServer;
 
 /// Bind on `0.0.0.0:port` and serve HTTP + WebSocket connections.
-pub async fn run(ws: Arc<WebSocketServer>, port: u16) -> Result<()> {
+pub async fn run(ws: Arc<WebSocketServer>, port: u16, access: Arc<Access>) -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(addr).await?;
     info!(
@@ -30,8 +31,9 @@ pub async fn run(ws: Arc<WebSocketServer>, port: u16) -> Result<()> {
         match listener.accept().await {
             Ok((stream, peer)) => {
                 let ws = ws.clone();
+                let access = access.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, peer, ws, port).await;
+                    handle_connection(stream, peer, ws, port, access).await;
                 });
             }
             Err(e) => {
@@ -41,7 +43,13 @@ pub async fn run(ws: Arc<WebSocketServer>, port: u16) -> Result<()> {
     }
 }
 
-async fn handle_connection(stream: TcpStream, peer: SocketAddr, ws: Arc<WebSocketServer>, port: u16) {
+async fn handle_connection(
+    stream: TcpStream,
+    peer: SocketAddr,
+    ws: Arc<WebSocketServer>,
+    port: u16,
+    access: Arc<Access>,
+) {
     // Peek without consuming so the WS handshake can re-read the same bytes.
     let mut buf = [0u8; 4096];
     let n = match stream.peek(&mut buf).await {
@@ -58,7 +66,7 @@ async fn handle_connection(stream: TcpStream, peer: SocketAddr, ws: Arc<WebSocke
         // WebSocket upgrade — tokio-tungstenite will re-read the request.
         ws.accept_client(stream, peer);
     } else {
-        if let Err(e) = handle_http(stream, port).await {
+        if let Err(e) = handle_http(stream, peer, port, &access).await {
             debug!("HTTP handler error from {}: {}", peer, e);
         }
     }
@@ -68,7 +76,12 @@ async fn handle_connection(stream: TcpStream, peer: SocketAddr, ws: Arc<WebSocke
 // Minimal HTTP/1.1 static-file handler
 // ---------------------------------------------------------------------------
 
-async fn handle_http(mut stream: TcpStream, port: u16) -> Result<()> {
+async fn handle_http(
+    mut stream: TcpStream,
+    peer: SocketAddr,
+    port: u16,
+    access: &Access,
+) -> Result<()> {
     // Read until end of HTTP headers (\r\n\r\n).
     let mut request = Vec::with_capacity(2048);
     let mut buf = [0u8; 4096];
@@ -111,15 +124,47 @@ async fn handle_http(mut stream: TcpStream, port: u16) -> Result<()> {
         return Ok(());
     }
 
+    // Who is asking. Static files and /api/version are served to anyone who
+    // can reach the port; everything else needs a level (see `crate::access`).
+    let level = access.authorize(peer.ip(), access::token_from_request(&request_str));
+    let api_cors = [
+        ("Access-Control-Allow-Origin", "*"),
+        ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+    ];
+
     // API routes
+
+    // Lets the dashboard tell "wrong token" apart from "bridge unreachable":
+    // a browser never sees why a WebSocket handshake was refused.
+    if path == "/api/auth-check" {
+        return match level {
+            Some(l) => {
+                let body = format!(r#"{{"ok":true,"local":{}}}"#, l == Level::Local);
+                send_response(&mut stream, 200, "application/json", body.as_bytes(), &api_cors).await
+            }
+            None => send_unauthorized(&mut stream, &api_cors).await,
+        };
+    }
+
     if path == "/api/network-info" {
+        let Some(level) = level else {
+            return send_unauthorized(&mut stream, &api_cors).await;
+        };
         let ip = get_local_ip().unwrap_or_else(|| "unknown".to_string());
-        let body = format!(r#"{{"ip":"{}","port":{}}}"#, ip, port);
-        let cors = [
-            ("Access-Control-Allow-Origin", "*"),
-            ("Access-Control-Allow-Methods", "GET, OPTIONS"),
-        ];
-        send_response(&mut stream, 200, "application/json", body.as_bytes(), &cors).await?;
+        // Only the racing PC's own browser learns the token and the Tailscale
+        // address: together they are the link the driver sends the engineer.
+        let body = if level == Level::Local {
+            serde_json::json!({
+                "ip": ip,
+                "port": port,
+                "local": true,
+                "tailscale_ip": get_tailscale_ip(),
+                "token": access.token(),
+            })
+        } else {
+            serde_json::json!({ "ip": ip, "port": port, "local": false })
+        };
+        send_response(&mut stream, 200, "application/json", body.to_string().as_bytes(), &api_cors).await?;
         return Ok(());
     }
 
@@ -130,6 +175,22 @@ async fn handle_http(mut stream: TcpStream, port: u16) -> Result<()> {
             ("Access-Control-Allow-Methods", "GET, OPTIONS"),
         ];
         send_response(&mut stream, 200, "application/json", body.as_bytes(), &cors).await?;
+        return Ok(());
+    }
+
+    // Control endpoints change the racing PC, so they are for its own browser
+    // only: loopback peer, and no foreign web page as the origin.
+    let is_control = (path == "/api/shutdown" || path == "/api/set-port") && method == "POST";
+    if is_control && !(level == Some(Level::Local) && access::origin_is_local(&request_str)) {
+        warn!("Refused {} from {} (control endpoints are local-only)", path, peer);
+        send_response(
+            &mut stream,
+            403,
+            "application/json",
+            b"{\"ok\":false,\"error\":\"local only\"}",
+            &api_cors,
+        )
+        .await?;
         return Ok(());
     }
 
@@ -250,6 +311,39 @@ async fn serve_static(stream: &mut TcpStream, path: &str) -> Result<()> {
     }
 }
 
+async fn send_unauthorized(stream: &mut TcpStream, cors: &[(&str, &str)]) -> Result<()> {
+    send_response(
+        stream,
+        401,
+        "application/json",
+        b"{\"ok\":false,\"error\":\"invalid or missing token\"}",
+        cors,
+    )
+    .await
+}
+
+/// Returns this machine's Tailscale IPv4 address, if Tailscale is up.
+///
+/// Same trick as [`get_local_ip`]: "connect" a UDP socket to Tailscale's
+/// service address (100.100.100.100) and read back which local address the
+/// OS routed it through. Nothing is sent. Without Tailscale the route falls
+/// to the normal LAN interface, so the result is only accepted when it lies
+/// in Tailscale's range, 100.64.0.0/10.
+fn get_tailscale_ip() -> Option<String> {
+    use std::net::{IpAddr, UdpSocket};
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("100.100.100.100:53").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(v4) if is_tailscale_v4(v4) => Some(v4.to_string()),
+        _ => None,
+    }
+}
+
+fn is_tailscale_v4(ip: std::net::Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (o[1] & 0xC0) == 64
+}
+
 /// Returns the primary LAN IPv4 address by probing a UDP socket.
 /// No packets are actually sent — connect() on a UDP socket just sets the routing destination.
 fn get_local_ip() -> Option<String> {
@@ -294,7 +388,11 @@ async fn send_response(
     let status_text = match status {
         200 => "OK",
         204 => "No Content",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
         404 => "Not Found",
+        500 => "Internal Server Error",
         413 => "Request Entity Too Large",
         _ => "Unknown",
     };
@@ -311,4 +409,21 @@ async fn send_response(
     stream.write_all(response.as_bytes()).await?;
     stream.write_all(body).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_tailscale_v4;
+
+    #[test]
+    fn tailscale_range_is_100_64_slash_10() {
+        let yes = ["100.64.0.1", "100.101.102.103", "100.127.255.254"];
+        let no = ["100.63.255.255", "100.128.0.1", "192.168.1.10", "10.0.0.1"];
+        for a in yes {
+            assert!(is_tailscale_v4(a.parse().unwrap()), "{a}");
+        }
+        for a in no {
+            assert!(!is_tailscale_v4(a.parse().unwrap()), "{a}");
+        }
+    }
 }

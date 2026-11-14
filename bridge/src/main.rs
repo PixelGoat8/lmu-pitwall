@@ -1,6 +1,7 @@
 // On Windows: suppress the console window entirely (GUI subsystem)
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod access;
 mod app_config;
 mod assets;
 mod config;
@@ -9,6 +10,7 @@ mod fuel;
 mod fuel_calculator;
 mod garage_api;
 mod http_server;
+mod idle;
 mod lap_tracker;
 mod post_race;
 mod protocol;
@@ -1291,7 +1293,12 @@ async fn main() -> Result<()> {
             }
             // Fall through: start the server normally and open the browser below.
         } else {
-            // Same or newer version already running — exit silently.
+            // Same or newer version already running. It has no window of its
+            // own, so "start it again" is how a user asks for the dashboard
+            // back: reopen it, then leave.
+            if !config.no_browser {
+                let _ = open::that(format!("http://localhost:{}", port));
+            }
             return Ok(());
         }
     }
@@ -1339,7 +1346,19 @@ async fn main() -> Result<()> {
             .init();
     }
 
+    // Access token: command line, then environment, then config.json (which
+    // always has one — it is generated on first run).
+    let token = config
+        .token
+        .clone()
+        .filter(|t| !t.trim().is_empty())
+        .or_else(|| std::env::var(access::TOKEN_ENV).ok().filter(|t| !t.trim().is_empty()))
+        .or_else(|| app_cfg.token.clone())
+        .unwrap_or_else(access::generate_token);
+    let access = Arc::new(access::Access::new(token.trim().to_string()));
+
     info!("LMU Bridge v{}", env!("CARGO_PKG_VERSION"));
+    info!("Remote clients need the access token; this PC's own browser does not");
     info!(
         "Config: port={} telemetry_fps={} scoring_fps={}",
         port, config.telemetry_fps, config.scoring_fps
@@ -1355,12 +1374,29 @@ async fn main() -> Result<()> {
 
     // Watch channel for ConnectionStatus (sent to new clients on connect so they
     // never see "Waiting" when LMU was already running before the dashboard opened).
+    // Seeded with "game not running", so a client that connects before LMU
+    // starts is told so explicitly instead of having to infer it from silence.
     let (connection_status_tx, connection_status_rx) =
-        tokio::sync::watch::channel::<Option<ServerMessage>>(None);
+        tokio::sync::watch::channel::<Option<ServerMessage>>(Some(
+            ServerMessage::ConnectionStatus {
+                game_connected: false,
+                plugin_version: String::new(),
+                telemetry_valid: true,
+                telemetry_warning: None,
+            },
+        ));
 
     let state = Arc::new(RwLock::new(TelemetryState::new()));
     let engineer_service = Arc::new(race_engineer::RaceEngineerService::new());
-    let ws    = Arc::new(WebSocketServer::new(port, all_drivers_rx, version_info_rx, connection_status_rx, engineer_service.clone()));
+    let game_status_rx = connection_status_rx.clone();
+    let ws    = Arc::new(WebSocketServer::new(
+        port,
+        all_drivers_rx,
+        version_info_rx,
+        connection_status_rx,
+        engineer_service.clone(),
+        access.clone(),
+    ));
 
     // Task 1 + 3: Shared memory polling + health check
     {
@@ -1387,7 +1423,7 @@ async fn main() -> Result<()> {
         let ws   = ws.clone();
         let http_port = port;
         tokio::spawn(async move {
-            if let Err(e) = http_server::run(ws, http_port).await {
+            if let Err(e) = http_server::run(ws, http_port, access).await {
                 tracing::error!("HTTP server error: {}", e);
             }
         });
@@ -1445,17 +1481,29 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Auto-shutdown when the browser window is closed.
-    //
-    // Waits for the first client to connect, then watches the client count.
-    // When the count drops to 0 (last tab closed), a 45-second grace period
-    // starts so that a normal page refresh doesn't trigger a shutdown.
-    // If no client reconnects within that window, the process exits.
-    {
+    // Idle shutdown: exit after a grace period with no client and no game
+    // (see `idle`). `--keep-alive` turns it off.
+    if !config.keep_alive {
         let count_rx = ws.client_count_rx();
+
+        // The game's state as a plain bool, derived from ConnectionStatus.
+        let (game_tx, game_rx) = watch::channel(false);
+        let mut status_rx = game_status_rx;
         tokio::spawn(async move {
-            auto_shutdown(count_rx).await;
-            info!("Auto-shutdown: browser closed — goodbye.");
+            loop {
+                let running = matches!(
+                    *status_rx.borrow(),
+                    Some(ServerMessage::ConnectionStatus { game_connected: true, .. })
+                );
+                if game_tx.send(running).is_err() || status_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        tokio::spawn(async move {
+            idle::wait_until_idle(count_rx, game_rx, idle::IDLE_GRACE).await;
+            info!("Idle shutdown: no client and no game for {:?} — goodbye.", idle::IDLE_GRACE);
             std::process::exit(0);
         });
     }
@@ -1498,7 +1546,7 @@ fn cleanup_old_logs(log_dir: &std::path::Path, keep_days: u64) {
 /// Strips the leading "v" from the tag name if present.
 /// Blocking — must be called via `spawn_blocking`.
 fn check_github_version() -> anyhow::Result<(String, String)> {
-    let response = ureq::get("https://api.github.com/repos/Swizzjack/lmu-pitwall/releases/latest")
+    let response = ureq::get("https://api.github.com/repos/PixelGoat8/lmu-pitwall/releases/latest")
         .set("User-Agent", concat!("lmu-pitwall/", env!("CARGO_PKG_VERSION")))
         .set("Accept", "application/vnd.github.v3+json")
         .call()?;
@@ -1512,7 +1560,7 @@ fn check_github_version() -> anyhow::Result<(String, String)> {
 
     let download_url = json["html_url"]
         .as_str()
-        .unwrap_or("https://github.com/Swizzjack/lmu-pitwall/releases/latest")
+        .unwrap_or("https://github.com/PixelGoat8/lmu-pitwall/releases/latest")
         .to_string();
 
     Ok((version, download_url))
@@ -1529,57 +1577,6 @@ fn version_older(a: &str, b: &str) -> bool {
         (major, minor, patch)
     }
     parse(a) < parse(b)
-}
-
-/// Grace period after the last client disconnects before the process exits.
-/// Long enough to survive a normal browser refresh (typically < 3 s).
-const AUTO_SHUTDOWN_GRACE_SECS: u64 = 45;
-
-async fn auto_shutdown(mut count_rx: watch::Receiver<usize>) {
-    // Phase 1: wait until at least one client has ever connected.
-    // Without this, the process would exit immediately on startup (count = 0).
-    loop {
-        if *count_rx.borrow() > 0 {
-            break;
-        }
-        if count_rx.changed().await.is_err() {
-            return; // channel closed → server shutting down anyway
-        }
-    }
-
-    // Phase 2: watch for the last client to disconnect, then start the timer.
-    loop {
-        // Wait for count to reach zero.
-        loop {
-            if count_rx.changed().await.is_err() {
-                return;
-            }
-            if *count_rx.borrow() == 0 {
-                break;
-            }
-        }
-
-        // Count is 0. Start grace-period timer; cancel if a new client arrives.
-        let grace = tokio::time::sleep(Duration::from_secs(AUTO_SHUTDOWN_GRACE_SECS));
-        tokio::pin!(grace);
-
-        loop {
-            tokio::select! {
-                _ = &mut grace => {
-                    // Grace period expired with no reconnect → shut down.
-                    return;
-                }
-                result = count_rx.changed() => {
-                    if result.is_err() { return; }
-                    if *count_rx.borrow() > 0 {
-                        // A new client connected — cancel the timer.
-                        break;
-                    }
-                    // Still 0 (spurious wake) — keep waiting.
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

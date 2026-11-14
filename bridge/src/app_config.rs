@@ -4,11 +4,15 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub port: Option<u16>,
+    /// Access token remote clients must present (see `crate::access`).
+    /// Generated on first run; edit the file to choose your own.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
-        Self { port: Some(9000) }
+        Self { port: Some(9000), token: None }
     }
 }
 
@@ -27,12 +31,20 @@ impl AppConfig {
     pub fn load_or_create() -> Self {
         let path = Self::config_path();
         if let Ok(data) = std::fs::read(&path) {
-            if let Ok(cfg) = serde_json::from_slice::<AppConfig>(&data) {
+            if let Ok(mut cfg) = serde_json::from_slice::<AppConfig>(&data) {
+                // Config written by an older version: add a token, keep the rest.
+                if cfg.token.as_deref().map(str::is_empty).unwrap_or(true) {
+                    cfg.token = Some(crate::access::generate_token());
+                    let _ = cfg.save();
+                }
                 return cfg;
             }
         }
         // File missing or corrupt — write default and return it.
-        let default = AppConfig::default();
+        let default = AppConfig {
+            token: Some(crate::access::generate_token()),
+            ..AppConfig::default()
+        };
         let _ = default.save();
         default
     }

@@ -26,4 +26,12 @@ pub struct Config {
     /// Do not open the browser automatically on startup
     #[arg(long, default_value_t = false)]
     pub no_browser: bool,
+
+    /// Access token for remote clients (overrides LMU_PITWALL_TOKEN and config.json)
+    #[arg(long)]
+    pub token: Option<String>,
+
+    /// Never exit on idle (default: exit after 10 minutes with no client and no game)
+    #[arg(long, default_value_t = false)]
+    pub keep_alive: bool,
 }

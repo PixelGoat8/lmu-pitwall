@@ -1,17 +1,20 @@
 use std::net::SocketAddr;
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     Arc,
 };
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, watch};
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
+use crate::access::{self, Access, Level};
 use crate::fuel_calculator::api::handle_command as fuel_handle;
 use crate::post_race::api::handle_command as post_race_handle;
 use crate::protocol::messages::{ClientCommand, ServerMessage};
@@ -20,6 +23,18 @@ use crate::race_engineer::{self, RaceEngineerService};
 /// Broadcast channel capacity — number of queued messages per slow client
 /// before older messages are dropped (lagged receiver).
 const BROADCAST_CAPACITY: usize = 128;
+
+/// How often each client gets a `Heartbeat` message and a WebSocket ping.
+///
+/// The heartbeat is for the dashboard: outside a session the bridge can be
+/// silent for minutes, and without a regular message the client cannot tell
+/// "nothing to say" from "the link died" (a tablet that slept, a Tailscale
+/// path that dropped). The ping is for us: the browser answers it on its own,
+/// and that answer is how we notice a client that vanished without closing.
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
+
+/// A client that has sent nothing — not even a pong — for this long is gone.
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Wire serialization format negotiated per-client via query parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +67,7 @@ pub struct WebSocketServer {
     /// Latest ConnectionStatus — sent immediately to newly connecting clients.
     connection_status_rx: watch::Receiver<Option<ServerMessage>>,
     engineer_service: Arc<RaceEngineerService>,
+    access: Arc<Access>,
 }
 
 impl WebSocketServer {
@@ -61,6 +77,7 @@ impl WebSocketServer {
         version_info_rx: watch::Receiver<Option<ServerMessage>>,
         connection_status_rx: watch::Receiver<Option<ServerMessage>>,
         engineer_service: Arc<RaceEngineerService>,
+        access: Arc<Access>,
     ) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (audio_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -75,6 +92,7 @@ impl WebSocketServer {
             version_info_rx,
             connection_status_rx,
             engineer_service,
+            access,
         }
     }
 
@@ -108,13 +126,13 @@ impl WebSocketServer {
 
     /// Accept a single WebSocket client from an already-accepted `TcpStream`.
     pub fn accept_client(&self, stream: TcpStream, peer: SocketAddr) {
-        info!("New WebSocket connection from {}", peer);
+        debug!("New WebSocket connection from {}", peer);
         let rx = self.tx.subscribe();
         let audio_rx = self.audio_tx.subscribe();
 
-        let count = self.client_count.fetch_add(1, Ordering::Relaxed) + 1;
-        let _ = self.count_tx.send(count);
-
+        // The client is counted only once its handshake has been accepted
+        // (see `handle_client`): a refused connection must neither keep the
+        // bridge alive nor arm the idle shutdown.
         tokio::spawn(handle_client(
             stream,
             peer,
@@ -128,6 +146,7 @@ impl WebSocketServer {
             self.tx.clone(),
             self.audio_tx.clone(),
             self.engineer_service.clone(),
+            self.access.clone(),
         ));
     }
 }
@@ -149,11 +168,14 @@ async fn handle_client(
     ws_broadcaster: broadcast::Sender<Arc<ServerMessage>>,
     _audio_broadcaster: broadcast::Sender<Arc<ServerMessage>>,
     engineer_service: Arc<RaceEngineerService>,
+    access: Arc<Access>,
 ) {
     // Default role is audio — this device plays engineer callouts.
     let mut is_audio = true;
     let is_json = Arc::new(AtomicBool::new(false));
     let is_json_cb = is_json.clone();
+    let level_flag = Arc::new(AtomicU8::new(LEVEL_NONE));
+    let level_cb = level_flag.clone();
 
     let ws =
         match tokio_tungstenite::accept_hdr_async(stream, move |req: &Request, resp: Response| {
@@ -165,23 +187,48 @@ async fn handle_client(
             if json_requested {
                 is_json_cb.store(true, Ordering::Relaxed);
             }
+
+            // Browsers cannot set headers on a WebSocket, so the token comes
+            // as `?token=`. Loopback peers need none.
+            let presented = req.uri().query().and_then(access::token_from_query);
+            match access.authorize(peer.ip(), presented) {
+                Some(Level::Local) => level_cb.store(LEVEL_LOCAL, Ordering::Relaxed),
+                Some(Level::Remote) => level_cb.store(LEVEL_REMOTE, Ordering::Relaxed),
+                None => {
+                    let mut refusal = ErrorResponse::new(Some("invalid or missing token".into()));
+                    *refusal.status_mut() = StatusCode::UNAUTHORIZED;
+                    return Err(refusal);
+                }
+            }
             Ok(resp)
         })
         .await
         {
             Ok(ws) => ws,
             Err(e) => {
-                warn!("WebSocket handshake failed for {}: {}", peer, e);
+                if level_flag.load(Ordering::Relaxed) == LEVEL_NONE {
+                    warn!("Refused WebSocket client {}: invalid or missing token", peer);
+                } else {
+                    warn!("WebSocket handshake failed for {}: {}", peer, e);
+                }
                 return;
             }
         };
+    let level = if level_flag.load(Ordering::Relaxed) == LEVEL_LOCAL {
+        Level::Local
+    } else {
+        Level::Remote
+    };
+
+    let count = client_count.fetch_add(1, Ordering::Relaxed) + 1;
+    let _ = count_tx.send(count);
 
     let fmt = if is_json.load(Ordering::Relaxed) {
         Format::Json
     } else {
         Format::MsgPack
     };
-    info!("Client {} connected (format: {:?})", peer, fmt);
+    info!("Client {} connected ({:?}, format: {:?}, {} total)", peer, level, fmt, count);
 
     let (mut sink, mut incoming) = ws.split();
 
@@ -217,8 +264,33 @@ async fn handle_client(
         }
     }
 
+    let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_seen = Instant::now();
+
     loop {
         tokio::select! {
+            // Liveness, both ways (see HEARTBEAT_INTERVAL).
+            _ = heartbeat.tick() => {
+                if last_seen.elapsed() > CLIENT_TIMEOUT {
+                    info!("Client {} timed out (silent for {:?})", peer, last_seen.elapsed());
+                    break;
+                }
+                let server_time_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let beat = ServerMessage::Heartbeat { server_time_ms };
+                let sent = match serialize(&beat, fmt) {
+                    Ok(ws_msg) => sink.send(ws_msg).await,
+                    Err(_) => Ok(()),
+                };
+                if sent.is_err() || sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    debug!("Heartbeat to {} failed", peer);
+                    break;
+                }
+            }
+
             // Outbound: receive broadcast message and forward to this client.
             result = rx.recv() => {
                 match result {
@@ -281,6 +353,9 @@ async fn handle_client(
 
             // Inbound: dispatch text commands; close and drop everything else.
             frame = incoming.next() => {
+                if matches!(frame, Some(Ok(_))) {
+                    last_seen = Instant::now();
+                }
                 match frame {
                     Some(Ok(Message::Close(_))) | None => {
                         debug!("Client {} sent close", peer);
@@ -300,6 +375,19 @@ async fn handle_client(
                                         "Client {} registered as {} (is_audio={})",
                                         peer, role, is_audio
                                     );
+                                    continue;
+                                }
+
+                                // Commands that change the racing PC are for its own
+                                // browser only.
+                                if level == Level::Remote && is_local_only(&cmd) {
+                                    warn!("Refused local-only command from remote client {}", peer);
+                                    let refusal = local_only_refusal(&cmd);
+                                    if let Ok(ws_msg) = serialize(&refusal, fmt) {
+                                        if sink.send(ws_msg).await.is_err() {
+                                            break;
+                                        }
+                                    }
                                     continue;
                                 }
 
@@ -361,10 +449,48 @@ async fn handle_client(
         }
     }
 
+    // Finish the close handshake instead of just dropping the socket, so the
+    // client sees a clean close (1000) rather than an abnormal one (1006) and
+    // can tell "the bridge said goodbye" from "the link broke". Bounded: a
+    // peer that is already gone must not hold this task open.
+    let _ = tokio::time::timeout(Duration::from_secs(1), sink.close()).await;
+
     let prev = client_count.fetch_sub(1, Ordering::Relaxed);
     let new_count = prev.saturating_sub(1);
     let _ = count_tx.send(new_count);
     info!("Client {} disconnected ({} remaining)", peer, new_count);
+}
+
+// ---------------------------------------------------------------------------
+// Access levels
+// ---------------------------------------------------------------------------
+
+const LEVEL_NONE: u8 = 0;
+const LEVEL_LOCAL: u8 = 1;
+const LEVEL_REMOTE: u8 = 2;
+
+/// Commands a remote client may not send: they download and install programs
+/// on the racing PC, delete files there, or make the bridge read a folder of
+/// the caller's choosing.
+fn is_local_only(cmd: &ClientCommand) -> bool {
+    match cmd {
+        ClientCommand::EngineerInstallPiper
+        | ClientCommand::EngineerInstallVoice { .. }
+        | ClientCommand::EngineerUninstallVoice { .. } => true,
+        ClientCommand::PostRaceInit { results_path } => {
+            results_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// The error a refused command gets back, in the family the sender listens to.
+fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
+    let message = "This action is only available on the racing PC itself.".to_string();
+    match cmd {
+        ClientCommand::PostRaceInit { .. } => ServerMessage::PostRaceError { message },
+        _ => ServerMessage::EngineerError { message },
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,5 +525,29 @@ fn serialize(msg: &ServerMessage, fmt: Format) -> Result<Message> {
             let text = serde_json::to_string(msg)?;
             Ok(Message::Text(text.into()))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installs_and_custom_paths_are_local_only() {
+        assert!(is_local_only(&ClientCommand::EngineerInstallPiper));
+        assert!(is_local_only(&ClientCommand::EngineerInstallVoice { voice_id: "x".into() }));
+        assert!(is_local_only(&ClientCommand::EngineerUninstallVoice { voice_id: "x".into() }));
+        assert!(is_local_only(&ClientCommand::PostRaceInit {
+            results_path: Some("C:\\Users".into())
+        }));
+    }
+
+    #[test]
+    fn reading_data_stays_open_to_remote_clients() {
+        assert!(!is_local_only(&ClientCommand::PostRaceInit { results_path: None }));
+        assert!(!is_local_only(&ClientCommand::PostRaceInit { results_path: Some("  ".into()) }));
+        assert!(!is_local_only(&ClientCommand::PostRaceSessionDetail { session_id: 1 }));
+        assert!(!is_local_only(&ClientCommand::EngineerGetStatus));
+        assert!(!is_local_only(&ClientCommand::FuelCalcInit));
     }
 }
