@@ -13,8 +13,35 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > |---|---|
 > | 1. Analysis of the code and of LMU's data sources | done: [docs/analisi-fase1.md](docs/analisi-fase1.md) (Italian), [docs/lmu-api.md](docs/lmu-api.md) |
 > | 2. Remote access: token, reconnects, no shutdown mid-race | done: [docs/accesso-remoto.md](docs/accesso-remoto.md) (Italian) |
-> | 3. Multi-driver hub | next |
+> | 3. Multi-driver hub, stint history, record/replay; class gaps, tyre status, fuel calculator auto-select | done: [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md) (Italian) |
 > | 4–8. Strategy engine, timing, history, AI comments, driver coaching | planned |
+
+## Hub: one dashboard for a team of drivers
+
+In a race driven in stints, each driver runs Pitwall on their own PC and the
+engineer runs one more in hub mode:
+
+```
+lmu-pitwall.exe --hub        # dashboard on http://localhost:9100
+```
+
+Paste each driver's link into the **Team & Stints** panel (click the 👥 badge).
+The hub relays the stream of whichever PC is driving, switches by itself at a
+driver swap, and keeps the stint history across swaps: driver, duration, laps,
+best and average lap, fuel and virtual energy per lap. A bridge can be pinned
+when the automatic choice is not what you want. Details and current limits:
+[docs/hub-multi-pilota.md](docs/hub-multi-pilota.md).
+
+## Record and replay
+
+```
+lmu-pitwall.exe --record race.pwrec                  # write the broadcast stream while you play
+lmu-pitwall.exe --replay race.pwrec --ws-port 9001   # serve it back, no game needed
+```
+
+Replay loops by default (`--replay-once`, `--replay-speed 2`). For layout work
+and hub tests without any recording, `tools/mock-session/make_session.py`
+generates synthetic sessions; they are not real telemetry.
 
 ## Remote access
 
@@ -80,9 +107,11 @@ The dashboard auto-connects and updates in real time. On first run, Windows Fire
 | **Standings** | Live positions with car number, brand, gap, sector times, pit status, and a MiniDamageGrid per car. In multiclass fields the list can be narrowed to your own class, and the gap can be measured against your class leader instead of the overall leader |
 | **VehicleStatus** | Damage overview at three detail levels: compact, medium, or full — covers aero, brakes, and suspension |
 | **Electronics** | TC, ABS, Engine Map, ARB, Regen, Brake Migration — read directly from shared memory, no button-counting; works in online sessions (EAC-protected) |
-| **Tires** | Temperatures (inner/middle/outer/carcass), pressures, wear %, and brake disc temps per corner |
+| **Tires** | Temperatures (inner/middle/outer/carcass), pressures, wear %, and brake disc temps per corner. A status chip per tyre says the one thing that matters: puncture, wheel off, locked, flat-spot risk (inferred from lock-ups, since LMU reports no flat spots), worn, cold or hot relative to the compound's optimal temperature |
+| **Gaps (class)** | Gap to the cars one place ahead and behind in your class, and whether each is closing or growing lap over lap |
+| **Team & Stints** | Hub mode only: the drivers' PCs, who is on screen, and the stint history |
 | **Race Engineer** | Spoken callouts during practice, qualifying, and race: tire wear warnings, weather escalations, pace deltas, fuel status, flag alerts |
-| **Strategy** | Virtual Energy (VE) per lap from LMU REST API; Fuel Calculator for multi-stint planning |
+| **Strategy** | Virtual Energy (VE) per lap from LMU REST API; Fuel Calculator for multi-stint planning, preselecting the track and car of the session in progress |
 | **Track Map** | Live positions of the whole field, drawn smoothly at your display's refresh rate, on an outline recorded from one clean lap. Sector segments with start/finish and sector lines, local yellows on the sector they apply to, track and sector lengths, elevation range, climb per lap and an elevation profile |
 | **Weather** | Current and forecast conditions |
 | **Inputs** | Throttle, brake, and steering trace |

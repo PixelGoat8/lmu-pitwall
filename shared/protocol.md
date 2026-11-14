@@ -130,3 +130,66 @@ WebSocket ping. Outside a session the bridge has nothing else to say, so this
 is what lets a client tell a quiet bridge from a dead link: the dashboard
 drops a socket that has been silent for 7 s. In the other direction, the
 bridge drops a client that has sent nothing (not even a pong) for 20 s.
+
+## Additions in this fork's phase 3
+
+All new fields are optional on input: a message without them still parses.
+
+### `TelemetryUpdate.tires[]`
+
+| Field | Type | Notes |
+|---|---|---|
+| `flat`, `detached` | bool | puncture, wheel gone |
+| `optimal_temp` | f64 \| null | the compound's optimal temperature, °C |
+| `surface` | u8 | 0 dry, 1 wet, 2 grass, 3 dirt, 4 gravel, 5 kerb, 6 special |
+| `lockups` | u32 | lock-ups since this tyre was fitted |
+| `lockup_total_s`, `lockup_longest_s` | f64 | seconds locked in total, and in the longest single lock-up |
+| `locked` | bool | locked right now |
+
+LMU publishes no flat spots. The lock-up tally (wheel far slower than the car
+under braking, for at least 80 ms) is what the dashboard's "flat spot?" hint is
+inferred from. It resets when a new tyre is fitted.
+
+### `ScoringUpdate`
+
+| Field | Type | Notes |
+|---|---|---|
+| `in_realtime` | bool | the local player is in the car |
+| `player_name` | string | who is playing on the bridge's PC |
+| `player_vehicle_model` | string | model of the player's car, e.g. "Peugeot 9X8" |
+| `vehicles[].control` | i8 | `mControl`: -1 nobody, 0 local player, 1 local AI (also the player's car parked in the garage), 2 remote, 3 replay |
+| `vehicles[].time_behind_next`, `laps_behind_next` | f64, i32 | gap to the car one position ahead |
+| `vehicles[].num_pitstops`, `pit_state` | i32, u8 | stops made; 0 none, 1 request, 2 entering, 3 stopped, 4 exiting |
+
+### Hub mode (`--hub`)
+
+A hub is an ordinary remote client of each driver's bridge and an ordinary
+server to its own dashboards. It relays the messages of the bridge it follows
+unchanged, and adds:
+
+**`HubStatus`** (every second and on change): `sources[]` with `id`, `label`,
+`host`, `link` (`connecting`, `connected`, `unauthorized`, `unreachable`),
+`game_connected`, `session_active`, `pc_player`, `driver_name`, `control`,
+`driving`, `in_pits`, `last_frame_age_ms`; `active_id` (bridge on screen);
+`follow` (pinned bridge, or null to follow the driver).
+
+**`HubStints`** (on change and every 5 s): `stints[]` with `number`, `driver`,
+`source`, `start_time`, `end_time` (null while running), `start_lap`,
+`end_lap`, `laps`, `best_lap`, `avg_lap`, `last_lap`, `fuel_start`, `fuel_end`,
+`ve_start`, `ve_end`.
+
+**`HubError`**: `message`.
+
+Commands: `hub_add_source {link, label?}`, `hub_remove_source {id}`,
+`hub_follow {id | null}`. A bridge that is not a hub answers them with
+`HubError`.
+
+Which bridge is followed: a pinned one if linked; else one that is driving
+(`control == 0` on its own car), keeping the current one if it still is; else
+the current one while it has a session; else any with a session.
+
+### Recordings (`.pwrec`)
+
+One JSON object per line: `{"t": <ms since start>, "m": "<base64 MessagePack>"}`
+as written by `--record`, or `{"t": …, "j": {…message as JSON…}}` for
+hand-made files. `--replay` accepts both; lines starting with `#` are ignored.
