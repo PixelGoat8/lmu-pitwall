@@ -3,14 +3,44 @@ import { useTelemetryStore } from '../../stores/telemetryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
 import type { TireData } from '../../types/telemetry'
+import { tyreStatus, tyreTempColor, unevenWear } from '../../utils/tyreStatus'
+import type { TyreSeverity } from '../../utils/tyreStatus'
 
-// Color thresholds in °C — applied on the raw °C value before display conversion
-function tempColorC(tempC: number): string {
-  if (tempC <= 0) return '#333'
-  if (tempC < 60)  return '#3b82f6'  // cold
-  if (tempC < 80)  return '#22c55e'  // optimal
-  if (tempC < 100) return '#facc15'  // warm
-  return '#ef4444'                   // hot
+const SEVERITY_COLOR: Record<TyreSeverity, string> = {
+  ok: '#22c55e',
+  info: '#3b82f6',
+  warn: '#facc15',
+  danger: '#ef4444',
+}
+
+// ---------------------------------------------------------------------------
+// StatusChip — the one thing most worth saying about this tyre, in words
+// ---------------------------------------------------------------------------
+function StatusChip({ tire, compact = false }: { tire: TireData; compact?: boolean }) {
+  const st = tyreStatus(tire)
+  if (!st.label) return <span style={{ height: compact ? 13 : 17 }} />
+  const col = SEVERITY_COLOR[st.severity]
+  const alert = st.severity === 'warn' || st.severity === 'danger'
+  return (
+    <span
+      title={st.detail}
+      style={{
+        fontFamily: fonts.body,
+        fontSize: compact ? 11 : 12,
+        fontWeight: 700,
+        letterSpacing: 0.5,
+        lineHeight: 1,
+        padding: compact ? '1px 3px' : '2px 5px',
+        borderRadius: 3,
+        whiteSpace: 'nowrap',
+        color: alert ? '#000' : col,
+        background: alert ? col : 'transparent',
+        border: `1px solid ${col}`,
+      }}
+    >
+      {st.label}
+    </span>
+  )
 }
 
 function wearColor(pct: number): string {
@@ -126,13 +156,14 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
         <span style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted, lineHeight: 1, letterSpacing: 1 }}>{label}</span>
         <div style={{ display: 'flex', gap: 2, height: 20, width: 24 }}>
           {[tire.temp_inner, tire.temp_mid, tire.temp_outer].map((t, i) => (
-            <div key={i} style={{ flex: 1, background: tempColorC(t), borderRadius: 2, opacity: 0.85 }} />
+            <div key={i} style={{ flex: 1, background: tyreTempColor(t, tire.optimal_temp), borderRadius: 2, opacity: 0.85 }} />
           ))}
         </div>
         <span style={txt(15, wearCol)}>W:{wearPct}%</span>
         <span style={txt(15, brakeCol)}>
           B:{hasData ? `${Math.round(brakeTempDisplay)}${tempUnitLabel()}` : '--'}
         </span>
+        <StatusChip tire={tire} compact />
       </div>
     )
   }
@@ -157,7 +188,7 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
           <div style={{ display: 'flex', gap: 2, height: 22, width: 30 }}>
             {[tire.temp_inner, tire.temp_mid, tire.temp_outer].map((t, i) => (
-              <div key={i} style={{ flex: 1, background: tempColorC(t), borderRadius: 2, opacity: 0.85 }} />
+              <div key={i} style={{ flex: 1, background: tyreTempColor(t, tire.optimal_temp), borderRadius: 2, opacity: 0.85 }} />
             ))}
           </div>
           <span style={txt(15, colors.text)}>
@@ -187,6 +218,9 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
 
         </div>
       </div>
+
+      {/* Status in words: puncture, flat-spot risk, wear, temperature */}
+      <StatusChip tire={tire} />
     </div>
   )
 }
@@ -220,6 +254,7 @@ export default function TireMonitor() {
 
   const defaultTire: TireData = { temp_inner: 0, temp_mid: 0, temp_outer: 0, carcass_temp: 0, pressure: 0, wear: 0, brake_temp: 0 }
   const [fl, fr, rl, rr] = tires ?? [defaultTire, defaultTire, defaultTire, defaultTire]
+  const uneven = unreliable ? null : unevenWear([fl, fr, rl, rr])
 
   const gap     = size === 'tiny' ? 6 : 8
   const cellGap = size === 'tiny' ? '4px 8px' : '6px 14px'
@@ -264,8 +299,11 @@ export default function TireMonitor() {
           )}
         </div>
       ) : (
-        <div style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted, letterSpacing: 2, textTransform: 'uppercase' }}>
+        <div style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted, letterSpacing: 2, textTransform: 'uppercase', textAlign: 'center' }}>
           Tires
+          {uneven && size !== 'tiny' ? (
+            <div style={{ fontSize: 12, letterSpacing: 0, textTransform: 'none', color: colors.accent }}>{uneven}</div>
+          ) : null}
         </div>
       )}
     </div>

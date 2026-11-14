@@ -8,6 +8,7 @@ import FuelManager from './widgets/FuelManager'
 import InputBars from './widgets/InputBars'
 import Standings from './widgets/Standings'
 import BattleWidget from './widgets/BattleWidget'
+import GapWidget from './widgets/GapWidget'
 import SessionInfo from './widgets/SessionInfo'
 import WeatherWidget from './widgets/WeatherWidget'
 import ConnectionStatus from './widgets/ConnectionStatus'
@@ -90,6 +91,13 @@ export const WIDGET_REGISTRY: Record<string, WidgetMeta> = {
     component: BattleWidget,
     defaultSize: { w: 6, h: 3 },
     minSize: { w: 4, h: 2 },
+  },
+  GapWidget: {
+    id: 'GapWidget',
+    name: 'Gaps (class)',
+    component: GapWidget,
+    defaultSize: { w: 4, h: 3 },
+    minSize: { w: 3, h: 2 },
   },
   SessionInfo: {
     id: 'SessionInfo',

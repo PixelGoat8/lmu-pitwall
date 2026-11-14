@@ -242,6 +242,11 @@ pub enum ServerMessage {
         /// `mPlayerName`: who is playing on this PC.
         #[serde(default)]
         player_name: String,
+        /// `mVehicleModel` of the player's car (e.g. "Peugeot 9X8"), empty
+        /// without a player car. `car_name` in the rows is the team entry,
+        /// which is not what results and the fuel calculator are keyed by.
+        #[serde(default)]
+        player_vehicle_model: String,
     },
 
     /// Low frequency: ~1Hz

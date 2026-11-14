@@ -2,6 +2,8 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { decode } from '@msgpack/msgpack'
 import { colors, fonts } from '../styles/theme'
 import { bridgeWsUrl } from '../utils/bridge'
+import { useTelemetryStore } from '../stores/telemetryStore'
+import { matchCar, matchTrack } from '../utils/fuelAutoSelect'
 
 // ── Types (matching bridge/src/fuel_calculator/types.rs) ─────────────────────
 
@@ -248,6 +250,29 @@ export default function FuelCalculator({ onClose }: { onClose: () => void }) {
   const [calcLoading, setCalcLoading] = useState(false)
   const [calcError, setCalcError] = useState<string | null>(null)
 
+  // Preselect the track and car of the session in progress. Returns what it
+  // did, for the note under the button. Reads the live state at call time, so
+  // it works both when the options arrive and from the button.
+  const [autoNote, setAutoNote] = useState<string | null>(null)
+  const applyCurrentSession = useCallback((options: TrackOption[]) => {
+    const live = useTelemetryStore.getState()
+    const liveTrack = live.session.track_name
+    if (!liveTrack) { setAutoNote('No session in progress.'); return }
+    const track = matchTrack<CarOption, TrackOption>(options, liveTrack, live.session.track_length)
+    if (!track) { setAutoNote(`No past data for "${liveTrack}".`); return }
+    const player = live.scoring.vehicles.find(v => v.id === live.scoring.player_vehicle_id)
+    const car = matchCar(track.cars, live.scoring.player_vehicle_model, player?.vehicle_class ?? '')
+    setSelectedVenue(track.track_venue)
+    setSelectedCourse(courseKey(track))
+    setSelectedCar(car?.car_name ?? '')
+    setFuelMultOverride('')
+    setResult(null)
+    setCalcError(null)
+    setAutoNote(car?.car_name
+      ? 'Track and car taken from the current session.'
+      : 'Track taken from the current session; pick the car.')
+  }, [])
+
   // Derived: distinct venues (preserve backend order), variants for the selected venue,
   // and the resolved track variant.
   const venues = [...new Set(tracks.map(t => t.track_venue))]
@@ -287,6 +312,10 @@ export default function FuelCalculator({ onClose }: { onClose: () => void }) {
   handleMsgRef.current = function handleMsg(msg: FuelCalcMsg) {
     if (msg.type === 'FuelCalcOptions') {
       setTracks(msg.options.tracks)
+      // First load only: do not override a choice the user already made.
+      if (selectedVenue === '' && useTelemetryStore.getState().session.track_name) {
+        applyCurrentSession(msg.options.tracks)
+      }
       setGameVersions(msg.options.game_versions)
       setCurrentVersion(msg.options.current_version)
       setInitLoading(false)
@@ -668,6 +697,31 @@ export default function FuelCalculator({ onClose }: { onClose: () => void }) {
             flexDirection: 'column',
             gap: 16,
           }}>
+            {/* Current session shortcut */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <button
+                onClick={() => applyCurrentSession(tracks)}
+                disabled={tracks.length === 0}
+                title="Select the track and car of the session in progress"
+                style={{
+                  background: colors.bgWidget,
+                  border: `1px solid ${colors.border}`,
+                  color: colors.text,
+                  fontFamily: fonts.body,
+                  fontSize: 14,
+                  padding: '5px 10px',
+                  borderRadius: 3,
+                  cursor: tracks.length === 0 ? 'not-allowed' : 'pointer',
+                  alignSelf: 'flex-start',
+                }}
+              >
+                ⟳ Use current session
+              </button>
+              {autoNote ? (
+                <span style={{ fontFamily: fonts.body, fontSize: 12, color: colors.textMuted }}>{autoNote}</span>
+              ) : null}
+            </div>
+
             {/* Track (venue) */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <Label>Track</Label>

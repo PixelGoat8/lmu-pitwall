@@ -316,6 +316,10 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
         player_vehicle_id: player_id,
         in_realtime:       info.mInRealtime != 0,
         player_name:       bytes_to_str(&info.mPlayerName).to_string(),
+        player_vehicle_model: tel
+            .and_then(|t| t.player())
+            .map(|v| bytes_to_str(&v.mVehicleModel).to_string())
+            .unwrap_or_default(),
     };
     (msg, player_id)
 }

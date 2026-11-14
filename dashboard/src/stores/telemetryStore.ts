@@ -80,6 +80,9 @@ interface ScoringSection {
   num_vehicles: number
   vehicles: VehicleScoring[]
   player_vehicle_id: number
+  in_realtime: boolean
+  player_name: string
+  player_vehicle_model: string
 }
 
 interface SessionSection {
@@ -191,6 +194,9 @@ const defaultScoring: ScoringSection = {
   num_vehicles: 0,
   vehicles: [],
   player_vehicle_id: -1,
+  in_realtime: false,
+  player_name: '',
+  player_vehicle_model: '',
 }
 
 const defaultSession: SessionSection = {
@@ -376,6 +382,9 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
               num_vehicles: msg.num_vehicles,
               vehicles: msg.vehicles,
               player_vehicle_id: msg.player_vehicle_id,
+              in_realtime: msg.in_realtime ?? false,
+              player_name: msg.player_name ?? '',
+              player_vehicle_model: msg.player_vehicle_model ?? '',
             },
             lapHistory,
             _lapTracking: tracking,

@@ -15,6 +15,17 @@ export interface TireData {
   pressure: number
   wear: number
   brake_temp: number
+  // The fields below are absent from bridges older than this fork's phase 3.
+  flat?: boolean
+  detached?: boolean
+  optimal_temp?: number | null   // °C, the compound's optimal temperature
+  surface?: number               // 0=dry,1=wet,2=grass,3=dirt,4=gravel,5=kerb,6=special
+  // Lock-ups since this tyre was fitted. LMU publishes no flat spots; a long
+  // lock-up is the best available hint that there is one.
+  lockups?: number
+  lockup_total_s?: number
+  lockup_longest_s?: number
+  locked?: boolean               // locked right now
 }
 
 export interface WeatherForecastNode {
@@ -77,6 +88,12 @@ export interface VehicleScoring {
   laps_behind_leader: number  // mLapsBehindLeader; 0 = on lead lap
   // Virtual Energy (0.0 = no VE / not a hybrid; >0 = fraction 0.0–1.0)
   virtual_energy: number
+  // Absent from bridges older than this fork's phase 3.
+  control?: number            // -1 nobody, 0 local player, 1 local AI / parked, 2 remote, 3 replay
+  time_behind_next?: number   // s to the car one position ahead (race)
+  laps_behind_next?: number
+  num_pitstops?: number
+  pit_state?: number          // 0 none, 1 request, 2 entering, 3 stopped, 4 exiting
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +192,9 @@ export interface ScoringUpdate {
   num_vehicles: number
   vehicles: VehicleScoring[]
   player_vehicle_id: number
+  in_realtime?: boolean           // the local player is in the car
+  player_name?: string            // who is playing on the bridge's PC
+  player_vehicle_model?: string   // model of the player's car, e.g. "Peugeot 9X8"
 }
 
 export interface SessionInfo {

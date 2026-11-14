@@ -34,6 +34,7 @@ const RACE_WIDGETS: WidgetConfig[] = [
   { id: 'session-1',    widgetType: 'SessionInfo' },
   { id: 'weather-1',    widgetType: 'WeatherWidget' },
   { id: 'connection-1', widgetType: 'ConnectionStatus' },
+  { id: 'gaps-1',       widgetType: 'GapWidget' },
 ]
 
 const RACE_LG = [
@@ -48,6 +49,7 @@ const RACE_LG = [
   { i: 'session-1',    x: 0,  y: 8, w: 4, h: 3, minW: 3, minH: 2 },
   { i: 'weather-1',    x: 4,  y: 8, w: 3, h: 3, minW: 2, minH: 2 },
   { i: 'connection-1', x: 7,  y: 8, w: 3, h: 3, minW: 2, minH: 2 },
+  { i: 'gaps-1',       x: 0,  y: 11, w: 4, h: 3, minW: 3, minH: 2 },
 ]
 
 const QUALIFYING_WIDGETS: WidgetConfig[] = [

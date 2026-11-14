@@ -54,3 +54,6 @@ AGENTS.md
 
 # Real LMU result XMLs used for testing — they carry real drivers' names.
 /*.xml
+
+# Recorded or generated sessions (see bridge --record / tools/mock-session)
+*.pwrec
