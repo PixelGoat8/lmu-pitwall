@@ -59,13 +59,18 @@ def main():
     ap.add_argument("--lockup-at", type=float, default=40.0, help="session time of a long front-left lock-up (-1 = none)")
     ap.add_argument("--session", default="Race", choices=["Race", "Practice", "Qualifying"])
     ap.add_argument("--track", default="Mock Circuit")
+    ap.add_argument("--team-class", default="Hyper", choices=["Hyper", "GT3"], help="class of the team car (GT3 = gets lapped by Hypercars)")
+    ap.add_argument("--fcy", default="", help='full course yellow as "start-end" in session seconds, e.g. "120-170"')
+    ap.add_argument("--penalty-at", type=float, default=-1.0, help="session time the team car gets a penalty (-1 = never)")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
     team = parse_team(args.team, args.duration)
     me = args.me or team[0][2]
     track_len = 5800.0
-    player_id = 2  # the team car is the third Hypercar on the grid
+    # The team car: the third Hypercar, or the second GT3.
+    player_id = 2 if args.team_class == "Hyper" else (args.cars + 1) // 2 + 1
+    fcy = tuple(float(x) for x in args.fcy.split("-")) if args.fcy else None
 
     cars = []
     for i in range(args.cars):
@@ -73,7 +78,7 @@ def main():
         cars.append(dict(id=i, cls=cls, model=rng.choice(models), name=NAMES[i % len(NAMES)],
                          lap=args.lap_time * factor * (1 + rng.uniform(-0.012, 0.012)),
                          start=-i * 0.012))  # grid stagger, in laps
-    cars[player_id]["model"] = "Peugeot 9X8"
+    cars[player_id]["model"] = "Peugeot 9X8" if args.team_class == "Hyper" else "Ferrari 296 LMGT3"
     STATIONARY = 12.0  # seconds stopped in the box
     LANE_EXTRA = 20.0  # extra seconds the pit lane costs on top of that
     PIT_FREEZE = STATIONARY + LANE_EXTRA
@@ -217,6 +222,7 @@ def main():
                     control=((0 if i_drive else 2) if is_team else 2),
                     time_behind_next=((prev[0] - total) * lapt if prev else 0.0),
                     laps_behind_next=0, num_pitstops=pitstops[i],
+                    num_penalties=(1 if is_team and 0 <= args.penalty_at <= t else 0),
                     pit_state=(0 if t >= pit_until[i] else
                                3 if LANE_EXTRA / 2 <= PIT_FREEZE - (pit_until[i] - t) < LANE_EXTRA / 2 + STATIONARY else
                                2 if PIT_FREEZE - (pit_until[i] - t) < LANE_EXTRA / 2 else 4),
@@ -266,6 +272,15 @@ def main():
             ve_history=None, ve_available=True, heading_deg=(math.degrees(ang) + 90) % 360,
         ))
 
+        in_fcy = fcy is not None and fcy[0] <= t < fcy[1]
+        # Blue flag: a car of a faster class within ~2 s behind our car on track.
+        my_total = prog[player_id][0]
+        blue_now = any(
+            c["cls"] != cars[player_id]["cls"] and cars[c["id"]]["lap"] < cars[player_id]["lap"]
+            and 0 < ((my_total - tot) % 1.0) * cars[player_id]["lap"] < 2.0
+            for tot, c in prog if c["id"] != player_id
+        )
+
         # --- SessionInfo at 1 Hz --------------------------------------------
         if step % 10 == 0:
             fc = [dict(sky_type=s, temperature=24 + n, rain_chance=r, humidity=55.0, wind_direction=2, wind_speed=3.0)
@@ -278,8 +293,8 @@ def main():
                          time_remaining=max(0.0, args.duration - t)))
             emit(t, dict(type="VehicleStatusUpdate", overheating=False, any_detached=False, dent_severity=[0] * 8,
                          last_impact_magnitude=0.0, last_impact_et=0.0, tire_flat=[False] * 4, tire_detached=[False] * 4,
-                         aero_damage=0.0, brake_wear=[0.0] * 4, suspension_damage=[0.0] * 4, yellow_flag_state=0,
-                         sector_flags=[0, 0, 0], start_light=0, game_phase=5, player_flag=0, individual_phase=0,
+                         aero_damage=0.0, brake_wear=[0.0] * 4, suspension_damage=[0.0] * 4, yellow_flag_state=(2 if in_fcy else 0),
+                         sector_flags=[0, 0, 0], start_light=0, game_phase=(6 if in_fcy else 5), player_flag=(6 if blue_now else 0), individual_phase=0,
                          player_under_yellow=False, player_sector=1, safety_car_active=False))
         if step % 20 == 0 and i_drive:
             emit(t, dict(type="PitInfo", fuel=fuel_live, fuel_capacity=fuel_cap, ve=ve_live, times=PIT_TIMES,
