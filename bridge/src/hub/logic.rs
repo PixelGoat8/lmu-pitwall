@@ -178,6 +178,11 @@ impl Stint {
     }
 }
 
+/// A fuel reading this much above the previous one is a refuel, not noise.
+const REFILL_MARGIN_L: f64 = 0.5;
+/// The same for virtual energy (fraction of the tank).
+const REFILL_MARGIN_VE: f64 = 0.005;
+
 /// Builds the stint history of the followed car from its scoring summaries.
 #[derive(Debug, Default)]
 pub struct StintTracker {
@@ -207,7 +212,13 @@ impl StintTracker {
             if st.fuel_start.is_none() {
                 st.fuel_start = Some(litres);
             }
-            st.fuel_end = Some(litres);
+            // A rise is a refuel. It can show up a moment before the car is
+            // flagged in the pits, and it belongs to the next stint, so it
+            // must not overwrite where this one ended.
+            match st.fuel_end {
+                Some(end) if litres > end + REFILL_MARGIN_L => {}
+                _ => st.fuel_end = Some(litres),
+            }
         }
     }
 
@@ -240,7 +251,8 @@ impl StintTracker {
                 st.end_lap = s.total_laps;
                 changed = true;
             }
-            if s.virtual_energy > 0.0 {
+            // As for fuel: a rise is a refill for the next stint.
+            if s.virtual_energy > 0.0 && st.ve_end.map(|e| s.virtual_energy <= e + REFILL_MARGIN_VE).unwrap_or(true) {
                 st.ve_end = Some(s.virtual_energy);
             }
 
@@ -435,6 +447,29 @@ mod tests {
         assert_eq!((st[2].driver.as_str(), st[2].source.as_str()), ("Bob", "bob-pc"));
         assert_eq!(st[2].end_time, None);
         assert_eq!(st[2].number, 3);
+    }
+
+    #[test]
+    fn a_refill_seen_before_the_pit_flag_does_not_end_the_stint_full() {
+        let mut t = StintTracker::new();
+        let mut row = s(5.0, "Alice", 0, -1.0, false);
+        row.virtual_energy = 0.9;
+        t.on_scoring("a", &row);
+        t.on_fuel(80.0);
+        t.on_fuel(74.0);
+        row.virtual_energy = 0.82;
+        row.total_laps = 2;
+        t.on_scoring("a", &row);
+        // Refilled a moment before the car is flagged in the pits.
+        t.on_fuel(90.0);
+        row.virtual_energy = 1.0;
+        row.session_time = 6.0;
+        t.on_scoring("a", &row);
+        row.in_pits = true;
+        t.on_scoring("a", &row);
+        let st = &t.stints()[0];
+        assert_eq!((st.fuel_start, st.fuel_end), (Some(80.0), Some(74.0)));
+        assert_eq!((st.ve_start, st.ve_end), (Some(0.9), Some(0.82)));
     }
 
     #[test]

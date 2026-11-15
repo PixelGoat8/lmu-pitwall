@@ -15,6 +15,7 @@ import type { HubStatus, HubStintInfo } from '../types/telemetry'
 import type { StrategyUpdate } from '../types/strategy'
 import type { RaceTiming } from '../types/race'
 import type { AiFeed } from '../types/ai'
+import type { CarLapRow, SessionDetail, SessionSummary } from '../types/history'
 
 // ---------------------------------------------------------------------------
 // Lap history
@@ -150,6 +151,8 @@ interface TelemetryStore {
   raceTiming: RaceTiming | null
   // AI engineer comments and status, from the bridge or hub.
   aiFeed: AiFeed | null
+  // Replies to the history panel's requests.
+  history: { sessions: SessionSummary[] | null; detail: SessionDetail | null; carLaps: { session_id: number; laps: CarLapRow[] } | null; error: string | null }
   lapHistory: LapEntry[]
   weatherHistory: WeatherSnapshot[]
   _lapTracking: { prevTotalLaps: number; prevPlayerId: number }
@@ -324,6 +327,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   strategy: null,
   raceTiming: null,
   aiFeed: null,
+  history: { sessions: null, detail: null, carLaps: null, error: null },
   lapHistory: [],
   weatherHistory: [],
   _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
@@ -570,6 +574,25 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
 
       case 'AiFeed':
         set({ aiFeed: msg })
+        break
+
+      case 'HistorySessions':
+        set((st) => ({ history: { ...st.history, sessions: msg.sessions, error: null } }))
+        break
+
+      case 'HistorySession': {
+        const { type: _t, ...detail } = msg
+        void _t
+        set((st) => ({ history: { ...st.history, detail, error: null } }))
+        break
+      }
+
+      case 'HistoryCarLaps':
+        set((st) => ({ history: { ...st.history, carLaps: { session_id: msg.session_id, laps: msg.laps } } }))
+        break
+
+      case 'HistoryError':
+        set((st) => ({ history: { ...st.history, error: msg.message } }))
         break
 
       case 'HubStatus':

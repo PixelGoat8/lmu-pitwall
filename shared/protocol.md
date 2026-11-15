@@ -264,3 +264,28 @@ Built from the stream by the bridge or hub the client is connected to.
 
 - `{"command":"ai_config","config":{"enabled":true,"model":"claude-opus-5-5","effort":"low","every_laps":2,"on_events":true,"min_interval_s":60,"max_calls_per_hour":40,"daily_budget_usd":3,"language":"Italian","show_unverified":false}}`
 - `{"command":"ai_ask","question":"…"}`: a comment now; `question` may be null.
+
+## Additions: engineer seat and session history
+
+### Following a car
+
+- `ScoringUpdate.own_car` (bool): this PC has a car of its own. `followed_car`
+  (string | null): the car name chosen to follow. `followed` (bool):
+  `player_vehicle_id` is that followed car.
+- `TelemetryUpdate.spectated` (bool): the car is followed, not driven here; its
+  fuel, tyre and brake values are LMU's placeholders.
+- Command `{"command":"follow_car","car_name":"Team X #93"}` (`null` to stop).
+  A hub answers it with `HubError`: choose the car on the Pitwall connected to
+  the game.
+
+### History commands and replies
+
+| Command | Reply |
+|---|---|
+| `history_list` | `HistorySessions { sessions[] }`: `id`, `started_at`, `last_seen`, `track`, `session_type`, `car_name`, `car_class`, `followed`, `laps`, `drivers[]`, `best_lap` |
+| `history_session { session_id }` | `HistorySession`: `session`, `laps[]`, `stints[]`, `events[]`, `ai[]`, `cars[]` (with best and average lap), `strategy_laps[]` |
+| `history_car_laps { session_id, car_ids[] }` | `HistoryCarLaps { session_id, laps[] }` (up to 8 cars) |
+| `history_strategy { session_id, lap }` | `HistoryStrategy { session_id, lap, json }` (a StrategyUpdate as JSON text) |
+| `history_delete { session_id }` | `HistorySessions`; local clients only |
+
+Errors come back as `HistoryError { message }`.

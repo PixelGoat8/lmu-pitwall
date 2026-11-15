@@ -295,7 +295,9 @@ function ConnectionBadge() {
   )
 }
 
-export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onOpenEngineer, resultsOpen, fuelOpen, engineerOpen }: {
+export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onOpenEngineer, onOpenHistory, historyOpen, resultsOpen, fuelOpen, engineerOpen }: {
+  onOpenHistory: () => void
+  historyOpen: boolean
   onOpenSettings: () => void
   onOpenResults: () => void
   onOpenFuel: () => void
@@ -414,6 +416,9 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
 
       {/* Fuel Calculator */}
       <ToolbarBtn onClick={onOpenFuel} title="Fuel Calculator" active={fuelOpen}>⛽</ToolbarBtn>
+
+      {/* Session history: stints, lap times, events, AI comments */}
+      <ToolbarBtn onClick={onOpenHistory} title="Session history" active={historyOpen}>🗂</ToolbarBtn>
 
       {/* Post Race Results */}
       <ToolbarBtn onClick={onOpenResults} title="Post Race Results" active={resultsOpen}>📋</ToolbarBtn>

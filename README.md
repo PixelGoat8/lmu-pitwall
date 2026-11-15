@@ -17,7 +17,8 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > | 4. Live strategy engine: consumption, stops, pit window, "box in N laps", tyres, pit lane loss, weather | done: [docs/strategia.md](docs/strategia.md) (Italian) |
 > | 5. Timing and race events (rivals lap by lap, multiclass traffic and blue flags, race log), touch layout and installable web app for tablets | done: [docs/tablet.md](docs/tablet.md) (Italian) |
 > | 6. AI engineer comments (Anthropic API) on the computed state only, numbers checked | done: [docs/ai.md](docs/ai.md) (Italian) |
-> | 7. Session history in SQLite for post-race analysis and stint comparison | planned |
+> | 7. Session history in SQLite: laps, every car's laps, stints, events, strategy, AI; History panel | done: [docs/storico.md](docs/storico.md) (Italian) |
+> | Engineer-seat fallback: follow the team car from LMU's engineer seat (timing, VE strategy, events, AI; no fuel or tyres) | done |
 > | Extra. Driver coaching: per-corner metrics, lift & coast, reference lap comparison | optional |
 
 ## Hub: one dashboard for a team of drivers
@@ -35,6 +36,22 @@ driver swap, and keeps the stint history across swaps: driver, duration, laps,
 best and average lap, fuel and virtual energy per lap. A bridge can be pinned
 when the automatic choice is not what you want. Details and current limits:
 [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md).
+
+## Session history
+
+Every session is saved as it happens to `history.sqlite` (our laps with fuel,
+VE and wear, every car's laps, stints, events, the strategy plan at each lap,
+AI comments). The 🗂 button opens the History panel: stint comparison, lap
+times against up to three rivals, events and AI comments. Details:
+[docs/storico.md](docs/storico.md).
+
+## Engineer seat
+
+In LMU's engineer seat the game gives your PC no car of its own. Pick the team
+car in the toolbar (**👁 Follow a car…**): timing, gaps, rivals, VE strategy,
+race events and AI comments work from your PC alone. Fuel and tyres are not
+shared by the game with other PCs (measured), so those widgets say so; they
+need Pitwall on the driver's PC.
 
 ## Tablet
 
