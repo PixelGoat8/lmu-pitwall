@@ -89,9 +89,25 @@ function Header({ s, onSettings, settingsOpen }: { s: StrategyUpdate; onSettings
   )
 }
 
-function EnergyColumn({ title, e }: { title: string; e: EnergyPlan }) {
+const MAX_SAVING = 0.25
+
+/** Where the consumption the plan uses comes from, in a few words. */
+function rateBasis(e: EnergyPlan): string {
+  const r = e.rate
+  const laps = `${r.laps} lap${r.laps === 1 ? '' : 's'}`
+  if (r.basis === 'lico') return `since LiCo changed, ${laps}`
+  if (r.basis === 'previous stint') return 'previous stint'
+  return `this stint, ${laps}`
+}
+
+function EnergyColumn({ title, e, kind, cfg }: { title: string; e: EnergyPlan; kind: 've' | 'fuel'; cfg: StrategyConfig }) {
   const u = e.unit
   const digits = u === '%' ? 1 : 1
+  const r = e.rate
+  // A stop fewer that needs more than this saving is out of reach of
+  // lift-and-coast: not worth a line.
+  const sv = e.save_stop && e.save_stop.saving <= MAX_SAVING ? e.save_stop : null
+  const t = e.target
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
       <span style={sectionTitle}>{title}</span>
@@ -99,10 +115,20 @@ function EnergyColumn({ title, e }: { title: string; e: EnergyPlan }) {
         {fmtEnergy(e.now, u, digits)}
         <span style={{ fontSize: 13, color: colors.textMuted }}> · {fmtNum(e.laps_left, 1)} laps</span>
       </span>
-      <span style={line} title={`Median of ${e.per_lap.n} laps. Mean ${fmtEnergy(e.per_lap.mean, u, 2)}, last ${fmtEnergy(e.per_lap.last, u, 2)}, range ${fmtEnergy(e.per_lap.min, u, 2)}–${fmtEnergy(e.per_lap.max, u, 2)}.`}>
-        {fmtEnergy(e.planning_per_lap, u, 2)}/lap
-        <Trend v={e.per_lap.trend_per_lap} unit={u === '%' ? '%' : 'L'} />
+      <span style={line} title={`Used by the plan: measured over ${rateBasis(e)}. A change of lift-and-coast restarts the measurement, so the plan follows it within two laps.`}>
+        <b style={{ color: colors.text }}>{fmtEnergy(e.planning_per_lap, u, 2)}/lap</b>
+        <span> · {rateBasis(e)}</span>
       </span>
+      {r.coast_s !== null ? (
+        <span style={line} title="Lift-and-coast: seconds per lap at speed (over 72 km/h) with neither throttle nor brake. Some of it is normal driving; what matters is the change.">
+          LiCo {r.coast_s.toFixed(1)} s/lap
+          {r.coast_before_s !== null ? (
+            <span style={{ color: r.coast_s > r.coast_before_s ? colors.success : colors.accent }}>
+              {' '}(was {r.coast_before_s.toFixed(1)} s{r.per_lap_before !== null ? ` at ${fmtEnergy(r.per_lap_before, u, 2)}/lap` : ''})
+            </span>
+          ) : null}
+        </span>
+      ) : null}
       <span style={line}>
         to finish {fmtEnergy(e.needed_to_finish, u)} ·{' '}
         <span style={{ color: (e.to_add ?? 0) > 0 ? colors.accent : colors.success }}>
@@ -110,6 +136,74 @@ function EnergyColumn({ title, e }: { title: string; e: EnergyPlan }) {
         </span>
       </span>
       <span style={line}>full tank: {fmtNum(e.stint_laps_max, 1)} laps · reserve {fmtEnergy(e.reserve, u)}</span>
+      {sv ? (
+        <span style={line} title="Highest consumption per lap that finishes with one stop fewer, and the coasting it takes (from how much each second of coasting has saved so far)">
+          {sv.stops === 0 ? 'no stop' : `${sv.stops} stop${sv.stops > 1 ? 's' : ''}`} at ≤ {fmtEnergy(sv.per_lap, u, 2)}/lap
+          <span style={{ color: sv.saving > 0.1 ? colors.danger : colors.accent }}> (−{(sv.saving * 100).toFixed(1)}%</span>
+          {sv.extra_coast_s !== null ? <span style={{ color: sv.saving > 0.1 ? colors.danger : colors.accent }}>, ≈ +{sv.extra_coast_s.toFixed(1)} s LiCo/lap</span> : null}
+          <span style={{ color: sv.saving > 0.1 ? colors.danger : colors.accent }}>)</span>
+        </span>
+      ) : null}
+      <TargetLine e={e} t={t} kind={kind} cfg={cfg} />
+    </div>
+  )
+}
+
+/**
+ * The engineer's target consumption: a field to set it, and once set, how far
+ * off the driver is and what the target gives.
+ */
+function TargetLine({ e, t, kind, cfg }: { e: EnergyPlan; t: EnergyPlan['target']; kind: 've' | 'fuel'; cfg: StrategyConfig }) {
+  const u = e.unit
+  const pct = u === '%'
+  const [draft, setDraft] = useState('')
+  const send = (v: number | null) => {
+    const config: StrategyConfig = kind === 've' ? { ...cfg, ve_target_per_lap: v } : { ...cfg, fuel_target_per_lap: v }
+    sendBridgeCommand({ command: 'strategy_config', config })
+    setDraft('')
+  }
+  const set = () => {
+    const n = Number(draft.replace(',', '.'))
+    if (draft.trim() === '' || !isFinite(n) || n <= 0) return
+    send(pct ? n / 100 : n)
+  }
+  const over = t ? t.off_target : 0
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+        <span style={line}>target</span>
+        <input
+          value={draft}
+          placeholder={t ? (pct ? (t.per_lap * 100).toFixed(2) : t.per_lap.toFixed(2)) : pct ? '%/lap' : 'L/lap'}
+          inputMode="decimal"
+          onChange={(ev) => setDraft(ev.target.value)}
+          onKeyDown={(ev) => { if (ev.key === 'Enter') set() }}
+          style={{ ...input, width: 70 }}
+          title={pct ? 'Virtual energy per lap you ask the driver for, in % (e.g. 3.2)' : 'Fuel per lap you ask the driver for, in litres'}
+        />
+        <span style={line}>{pct ? '%/lap' : 'L/lap'}</span>
+        <button onClick={set} disabled={draft.trim() === ''} style={{ ...smallButton(draft.trim() !== ''), opacity: draft.trim() === '' ? 0.5 : 1 }}>Set</button>
+        {t ? <button onClick={() => send(null)} style={smallButton(false)}>Clear</button> : null}
+      </span>
+      {t ? (
+        <>
+          <span style={line}>
+            now{' '}
+            <b style={{ color: Math.abs(over) < 0.01 ? colors.success : over > 0 ? colors.danger : colors.success }}>
+              {Math.abs(over) < 0.01 ? 'on target' : `${over > 0 ? '+' : '−'}${Math.abs(over * 100).toFixed(1)}% ${over > 0 ? 'over' : 'under'}`}
+            </b>
+            {t.extra_coast_s !== null && Math.abs(over) >= 0.01
+              ? t.extra_coast_s > 0
+                ? ` · needs ≈ +${t.extra_coast_s.toFixed(1)} s LiCo/lap`
+                : ` · margin ≈ ${Math.abs(t.extra_coast_s).toFixed(1)} s LiCo/lap`
+              : ''}
+          </span>
+          <span style={line}>
+            at target: {fmtNum(t.laps_left, 1)} laps left · full tank {fmtNum(t.stint_laps_max, 1)} laps
+            {t.stops !== null ? ` · ${t.stops === 0 ? 'no stop' : `${t.stops} stop${t.stops > 1 ? 's' : ''}`}` : ''}
+          </span>
+        </>
+      ) : null}
     </div>
   )
 }
@@ -118,8 +212,8 @@ function Energy({ s }: { s: StrategyUpdate }) {
   if (!s.fuel && !s.ve) return null
   return (
     <div style={{ display: 'grid', gridTemplateColumns: s.fuel && s.ve ? '1fr 1fr' : '1fr', gap: 12 }}>
-      {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} /> : null}
-      {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} /> : null}
+      {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} kind="fuel" cfg={s.config} /> : null}
+      {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} kind="ve" cfg={s.config} /> : null}
     </div>
   )
 }
@@ -280,8 +374,10 @@ function Settings({ cfg }: { cfg: StrategyConfig }) {
     wear: String(Math.round(cfg.tyre_wear_limit * 100)),
     tyres: cfg.change_tyres,
     loss: cfg.pit_lane_loss_s !== null ? String(cfg.pit_lane_loss_s) : '',
+    veTarget: cfg.ve_target_per_lap !== null ? String(+(cfg.ve_target_per_lap * 100).toFixed(3)) : '',
+    fuelTarget: cfg.fuel_target_per_lap !== null ? String(cfg.fuel_target_per_lap) : '',
   })
-  const num = (s: string) => (s.trim() === '' || isNaN(Number(s)) ? null : Number(s))
+  const num = (s: string) => (s.trim() === '' || isNaN(Number(s.replace(',', '.'))) ? null : Number(s.replace(',', '.')))
   const apply = () => {
     const config: StrategyConfig = {
       reserve_laps: num(draft.reserve) ?? 0.5,
@@ -289,10 +385,12 @@ function Settings({ cfg }: { cfg: StrategyConfig }) {
       tyre_wear_limit: (num(draft.wear) ?? 30) / 100,
       change_tyres: draft.tyres,
       pit_lane_loss_s: num(draft.loss),
+      ve_target_per_lap: num(draft.veTarget) !== null ? (num(draft.veTarget) as number) / 100 : null,
+      fuel_target_per_lap: num(draft.fuelTarget),
     }
     sendBridgeCommand({ command: 'strategy_config', config })
   }
-  const field = (label: string, key: 'reserve' | 'stint' | 'wear' | 'loss', placeholder: string, title: string) => (
+  const field = (label: string, key: 'reserve' | 'stint' | 'wear' | 'loss' | 'veTarget' | 'fuelTarget', placeholder: string, title: string) => (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontFamily: fonts.body, fontSize: 12, color: colors.textMuted }} title={title}>
       {label}
       <input
@@ -310,6 +408,8 @@ function Settings({ cfg }: { cfg: StrategyConfig }) {
       {field('Max stint (min)', 'stint', 'none', 'Longest a driver may stay in the car; empty = no limit')}
       {field('Tyre limit (% tread)', 'wear', '30', 'Below this a tyre counts as finished')}
       {field('Pit lane loss (s)', 'loss', 'measured', 'Empty = use the measured figure for this track')}
+      {field('VE target (%/lap)', 'veTarget', 'none', 'Virtual energy per lap you ask the driver for; empty = no target')}
+      {field('Fuel target (L/lap)', 'fuelTarget', 'none', 'Fuel per lap you ask the driver for; empty = no target')}
       <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: fonts.body, fontSize: 13, color: colors.text }}>
         <input type="checkbox" checked={draft.tyres} onChange={(e) => setDraft((d) => ({ ...d, tyres: e.target.checked }))} />
         new tyres at the stop

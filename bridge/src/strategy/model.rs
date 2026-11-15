@@ -18,6 +18,13 @@ const MIN_TREND_SAMPLES: usize = 4;
 const CLEAN_LAP_FACTOR: f64 = 1.07;
 /// Rows in the "pit in N laps" table.
 const MAX_WHATIF_ROWS: usize = 8;
+/// A change of this many seconds of coasting per lap counts as the driver
+/// changing lift-and-coast.
+pub const LICO_STEP_S: f64 = 1.0;
+/// The saving per second of coasting needs this many laps…
+const LICO_FIT_MIN_LAPS: usize = 6;
+/// …spread over at least this many seconds of coasting.
+const LICO_FIT_MIN_SPREAD_S: f64 = 1.5;
 
 // ---------------------------------------------------------------------------
 // Input: one completed lap
@@ -40,6 +47,9 @@ pub struct LapSample {
     pub pit: bool,
     /// Full-course yellow or safety car at some point during the lap.
     pub caution: bool,
+    /// Seconds of the lap spent coasting at speed, off both pedals: the
+    /// measure of lift-and-coast. `None` when the lap was not watched whole.
+    pub coast_s: Option<f64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +166,158 @@ pub fn clean_laps(laps: &[LapSample]) -> Vec<(f64, f64)> {
 }
 
 // ---------------------------------------------------------------------------
+// The consumption the plan uses, aware of lift-and-coast
+// ---------------------------------------------------------------------------
+
+/// Runs of green laps for one quantity, as index ranges `(start, end)` into
+/// `laps`: the level at the line of `laps[start]` opens the run and every lap
+/// up to `laps[end]` consumed from it. Same rules as `consumption`.
+fn green_runs(laps: &[LapSample], pick: &impl Fn(&LapSample) -> Option<f64>) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    let mut start: Option<usize> = None;
+    for (i, l) in laps.iter().enumerate() {
+        let level = pick(l);
+        let prev_level = i.checked_sub(1).and_then(|j| pick(&laps[j]));
+        let continues = i > 0 && l.lap == laps[i - 1].lap + 1 && !l.pit && !l.caution;
+        let dropped = matches!((prev_level, level), (Some(a), Some(b)) if b < a);
+        match start {
+            Some(s) if continues && dropped => match out.last_mut() {
+                Some(r) if r.0 == s => r.1 = i,
+                _ => out.push((s, i)),
+            },
+            _ => start = level.map(|_| i),
+        }
+        if l.pit || l.caution {
+            start = level.map(|_| i);
+        }
+    }
+    out
+}
+
+fn median(v: &[f64]) -> Option<f64> {
+    if v.is_empty() {
+        return None;
+    }
+    let mut s = v.to_vec();
+    s.sort_by(f64::total_cmp);
+    let n = s.len();
+    Some(if n % 2 == 1 { s[n / 2] } else { (s[n / 2 - 1] + s[n / 2]) / 2.0 })
+}
+
+/// The consumption the plan uses and where it comes from.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Rate {
+    pub per_lap: f64,
+    /// Laps it is measured over.
+    pub laps: u32,
+    /// "stint": the green laps of this stint (the last `STATS_WINDOW` at
+    /// most); "lico": only the laps since the driver changed lift-and-coast;
+    /// "previous stint": nothing measured since the last stop yet.
+    pub basis: String,
+    /// Coasting over those laps (median), seconds per lap.
+    pub coast_s: Option<f64>,
+    /// With basis "lico": coasting before the change, seconds per lap.
+    pub coast_before_s: Option<f64>,
+    /// With basis "lico": consumption before the change.
+    pub per_lap_before: Option<f64>,
+}
+
+/// Where the driver last changed coasting within the laps `first..=last`:
+/// the index of the first lap at the current level, if there was a clear
+/// change. Walking back from the newest lap, a lap more than `LICO_STEP_S`
+/// away from the current level is a change only if the lap before it is too,
+/// on the same side: one lap stuck in traffic is not. The current level needs
+/// two laps, so a newest lap unlike the others is taken as a one-off.
+fn lico_change(laps: &[LapSample], first: usize, last: usize) -> Option<usize> {
+    // The level is the median of the laps that fit it; one-offs stay in the
+    // stretch but do not move the level.
+    let walk = |anchor: usize| -> usize {
+        let mut fit: Vec<f64> = laps[anchor].coast_s.into_iter().collect();
+        let mut j = anchor;
+        while j > first {
+            let level = median(&fit);
+            let off = |i: usize| match (laps[i].coast_s, level) {
+                (Some(c), Some(m)) if (c - m).abs() > LICO_STEP_S => Some((c - m).signum()),
+                _ => None,
+            };
+            match off(j - 1) {
+                Some(side) if j >= first + 2 && off(j - 2) == Some(side) => break,
+                Some(_) => {}
+                None => fit.extend(laps[j - 1].coast_s),
+            }
+            j -= 1;
+        }
+        j
+    };
+    let mut j = walk(last);
+    if last + 1 - j < 2 && last > first {
+        j = walk(last - 1);
+    }
+    (j >= first + 2 && last + 1 - j >= 2).then_some(j)
+}
+
+/// The consumption to plan with. Over the green laps of the current stint,
+/// or only those since the driver last changed lift-and-coast: a stint
+/// average would take many laps to follow the change. `None` before two
+/// consecutive green laps.
+pub fn planning_rate(laps: &[LapSample], pick: impl Fn(&LapSample) -> Option<f64>) -> Option<Rate> {
+    let runs = green_runs(laps, &pick);
+    let &(s, e) = runs.last()?;
+    let current = e + 1 == laps.len();
+    // Consumption laps are s+1..=e; at most the last STATS_WINDOW of them.
+    let first = (s + 1).max((e + 1).saturating_sub(STATS_WINDOW));
+    let rate_over = |from: usize, to: usize| -> Option<f64> {
+        let (a, b) = (pick(&laps[from - 1])?, pick(&laps[to])?);
+        let n = (laps[to].lap - laps[from - 1].lap) as f64;
+        (n > 0.0 && a > b).then(|| (a - b) / n)
+    };
+    let coast = |from: usize, to: usize| median(&laps[from..=to].iter().filter_map(|l| l.coast_s).collect::<Vec<_>>());
+    let change = if current { lico_change(laps, s + 1, e) } else { None };
+    if let Some(j) = change {
+        return Some(Rate {
+            per_lap: rate_over(j, e)?,
+            laps: (e + 1 - j) as u32,
+            basis: "lico".into(),
+            coast_s: coast(j, e),
+            coast_before_s: coast(s + 1, j - 1),
+            per_lap_before: rate_over(s + 1, j - 1),
+        });
+    }
+    Some(Rate {
+        per_lap: rate_over(first, e)?,
+        laps: (e + 1 - first) as u32,
+        basis: if current { "stint".into() } else { "previous stint".into() },
+        coast_s: coast(first, e),
+        coast_before_s: None,
+        per_lap_before: None,
+    })
+}
+
+/// How much one more second of coasting per lap saves, in the quantity's
+/// unit per lap: the slope of lap-by-lap consumption against coasting over the
+/// session's green laps. `None` until the driver has coasted by different
+/// amounts over enough laps to tell, or if more coasting did not save.
+pub fn lico_saving_per_s(laps: &[LapSample], pick: impl Fn(&LapSample) -> Option<f64>) -> Option<f64> {
+    let mut pts: Vec<(f64, f64)> = Vec::new();
+    for (s, e) in green_runs(laps, &pick) {
+        for i in s + 1..=e {
+            if let (Some(a), Some(b), Some(c)) = (pick(&laps[i - 1]), pick(&laps[i]), laps[i].coast_s) {
+                pts.push((c, a - b));
+            }
+        }
+    }
+    let pts = &pts[pts.len().saturating_sub(3 * STATS_WINDOW)..];
+    if pts.len() < LICO_FIT_MIN_LAPS {
+        return None;
+    }
+    let (lo, hi) = pts.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| (lo.min(p.0), hi.max(p.0)));
+    if hi - lo < LICO_FIT_MIN_SPREAD_S {
+        return None;
+    }
+    slope(pts).filter(|k| *k < 0.0).map(|k| -k)
+}
+
+// ---------------------------------------------------------------------------
 // How much race is left
 // ---------------------------------------------------------------------------
 
@@ -214,36 +376,107 @@ pub struct EnergyPlan {
     /// Longest stint a full tank allows, in laps.
     pub stint_laps_max: f64,
     pub stops: Option<u32>,
+    /// What `planning_per_lap` is measured over.
+    pub rate: Rate,
+    /// What it takes to make one stop fewer.
+    pub save_stop: Option<SaveStop>,
+    /// The engineer's target consumption and what it gives.
+    pub target: Option<Target>,
 }
 
+/// The consumption that saves a stop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SaveStop {
+    /// Stops at that consumption.
+    pub stops: u32,
+    /// Highest consumption per lap that makes it.
+    pub per_lap: f64,
+    /// Saving needed against the consumption now, as a fraction.
+    pub saving: f64,
+    /// More coasting it takes, seconds per lap; `None` until measured.
+    pub extra_coast_s: Option<f64>,
+}
+
+/// A consumption set by hand, and the race it gives.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Target {
+    pub per_lap: f64,
+    /// Consumption now against the target, as a fraction: +0.05 = 5 % over.
+    pub off_target: f64,
+    pub laps_left: f64,
+    pub stint_laps_max: f64,
+    pub stops: Option<u32>,
+    /// Coasting it takes to get there from now, seconds per lap (negative =
+    /// the driver can coast less); `None` until measured.
+    pub extra_coast_s: Option<f64>,
+}
+
+/// At a consumption of `c` per lap: laps left, longest stint, energy needed
+/// to finish, energy to add, stops.
+fn tank_at(c: f64, now: f64, capacity: f64, reserve_laps: f64, laps_to_go: Option<f64>) -> (f64, f64, Option<f64>, Option<f64>, Option<u32>) {
+    let reserve = reserve_laps.max(0.0) * c;
+    let usable = (capacity - reserve).max(c);
+    let needed = laps_to_go.map(|l| l * c + reserve);
+    let to_add = needed.map(|n| (n - now).max(0.0));
+    let stops = to_add.map(|a| if a <= 0.0 { 0 } else { (a / usable).ceil() as u32 });
+    (((now - reserve) / c).max(0.0), usable / c, needed, to_add, stops)
+}
+
+/// The highest consumption per lap that finishes with `stops` stops, in the
+/// same model as `energy_plan`: each stop fills the tank, the reserve is
+/// never used. From `L c + r c - now <= stops (C - r c)`.
+pub fn per_lap_for_stops(now: f64, capacity: f64, reserve_laps: f64, laps_to_go: f64, stops: u32) -> Option<f64> {
+    let r = reserve_laps.max(0.0);
+    let c = (now + stops as f64 * capacity) / (laps_to_go + (stops as f64 + 1.0) * r);
+    (c > 0.0 && laps_to_go > 0.0).then_some(c)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn energy_plan(
     unit: &str,
     now: f64,
     capacity: f64,
     per_lap: Stat,
+    rate: Rate,
     reserve_laps: f64,
     laps_to_go: Option<f64>,
+    saving_per_coast_s: Option<f64>,
+    target: Option<f64>,
 ) -> Option<EnergyPlan> {
-    let use_per_lap = per_lap.median;
+    let use_per_lap = rate.per_lap;
     if use_per_lap <= 0.0 || capacity <= 0.0 {
         return None;
     }
-    let reserve = reserve_laps.max(0.0) * use_per_lap;
-    let usable = (capacity - reserve).max(use_per_lap);
-    let needed = laps_to_go.map(|l| l * use_per_lap + reserve);
-    let to_add = needed.map(|n| (n - now).max(0.0));
+    let (laps_left, stint_laps_max, needed, to_add, stops) = tank_at(use_per_lap, now, capacity, reserve_laps, laps_to_go);
+    let coast_for = |c: f64| saving_per_coast_s.filter(|k| *k > 0.0).map(|k| (use_per_lap - c) / k);
+    let save_stop = match (stops, laps_to_go) {
+        (Some(s), Some(go)) if s > 0 => per_lap_for_stops(now, capacity, reserve_laps, go, s - 1).map(|c| SaveStop {
+            stops: s - 1,
+            per_lap: c,
+            saving: 1.0 - c / use_per_lap,
+            extra_coast_s: coast_for(c),
+        }),
+        _ => None,
+    };
+    let target = target.filter(|t| *t > 0.0).map(|t| {
+        let (laps_left, stint_laps_max, _, _, stops) = tank_at(t, now, capacity, reserve_laps, laps_to_go);
+        Target { per_lap: t, off_target: use_per_lap / t - 1.0, laps_left, stint_laps_max, stops, extra_coast_s: coast_for(t) }
+    });
     Some(EnergyPlan {
         unit: unit.into(),
         now,
         capacity,
         planning_per_lap: use_per_lap,
-        reserve,
-        laps_left: ((now - reserve) / use_per_lap).max(0.0),
+        reserve: reserve_laps.max(0.0) * use_per_lap,
+        laps_left,
         needed_to_finish: needed,
         to_add,
-        stint_laps_max: usable / use_per_lap,
-        stops: to_add.map(|a| if a <= 0.0 { 0 } else { (a / usable).ceil() as u32 }),
+        stint_laps_max,
+        stops,
         per_lap,
+        rate,
+        save_stop,
+        target,
     })
 }
 
@@ -619,6 +852,7 @@ mod tests {
             wear: Some([1.0 - 0.01 * n as f64; 4]),
             pit: false,
             caution: false,
+            coast_s: None,
         }
     }
 
@@ -708,10 +942,110 @@ mod tests {
         Stat::of(&[(1.0, per_lap), (2.0, per_lap), (3.0, per_lap)]).unwrap()
     }
 
+    fn rate(per_lap: f64) -> Rate {
+        Rate { per_lap, laps: 3, basis: "stint".into(), coast_s: None, coast_before_s: None, per_lap_before: None }
+    }
+
+    /// Laps 1..=n from 90 L; lap k uses `use_of(k)` litres with `coast_of(k)` s coasting.
+    fn stint(n: i64, use_of: impl Fn(i64) -> f64, coast_of: impl Fn(i64) -> Option<f64>) -> Vec<LapSample> {
+        let mut level = 90.0;
+        let mut out = vec![LapSample { coast_s: None, ..lap(0, 90.0, level, 0.0) }];
+        for k in 1..=n {
+            level -= use_of(k);
+            out.push(LapSample { coast_s: coast_of(k), ..lap(k, 90.0, level, 0.0) });
+        }
+        out
+    }
+
+    #[test]
+    fn the_plan_follows_a_lico_change() {
+        // 3 L a lap coasting 1 s, then from lap 8 coasting 4 s for 2.7 L.
+        let laps = stint(12, |k| if k < 8 { 3.0 } else { 2.7 }, |k| Some(if k < 8 { 1.0 } else { 4.0 }));
+        let r = planning_rate(&laps, |l| l.fuel).unwrap();
+        assert_eq!((r.basis.as_str(), r.laps), ("lico", 5));
+        assert!(close(r.per_lap, 2.7), "{r:?}");
+        assert_eq!((r.coast_s, r.coast_before_s), (Some(4.0), Some(1.0)));
+        assert!(close(r.per_lap_before.unwrap(), 3.0));
+        // The other way: the driver stops saving.
+        let laps = stint(12, |k| if k < 8 { 2.7 } else { 3.0 }, |k| Some(if k < 8 { 4.0 } else { 1.0 }));
+        let r = planning_rate(&laps, |l| l.fuel).unwrap();
+        assert_eq!(r.basis, "lico");
+        assert!(close(r.per_lap, 3.0));
+    }
+
+    #[test]
+    fn the_latest_of_two_lico_changes_counts() {
+        let use_of = |k: i64| if k < 5 { 3.0 } else if k < 10 { 2.8 } else { 2.6 };
+        let coast_of = |k: i64| Some(if k < 5 { 1.0 } else if k < 10 { 3.0 } else { 5.0 });
+        let r = planning_rate(&stint(13, use_of, coast_of), |l| l.fuel).unwrap();
+        assert_eq!((r.basis.as_str(), r.laps, r.coast_s, r.coast_before_s), ("lico", 4, Some(5.0), Some(3.0)));
+        assert!(close(r.per_lap, 2.6));
+    }
+
+    #[test]
+    fn one_lap_in_traffic_is_not_a_lico_change() {
+        let laps = stint(12, |k| if k == 11 { 2.6 } else { 3.0 }, |k| Some(if k == 11 { 6.0 } else { 1.0 }));
+        let r = planning_rate(&laps, |l| l.fuel).unwrap();
+        assert_eq!((r.basis.as_str(), r.laps), ("stint", 10));
+        // Without any coasting figure: the stint, last ten laps.
+        let laps = stint(14, |_| 3.0, |_| None);
+        let r = planning_rate(&laps, |l| l.fuel).unwrap();
+        assert_eq!((r.basis.as_str(), r.laps), ("stint", 10));
+        assert!(close(r.per_lap, 3.0));
+    }
+
+    #[test]
+    fn after_a_stop_the_previous_stint_holds() {
+        let mut laps = stint(6, |_| 3.0, |_| Some(1.0));
+        let mut pit = lap(7, 120.0, 90.0, 0.0);
+        pit.pit = true;
+        laps.push(pit);
+        let r = planning_rate(&laps, |l| l.fuel).unwrap();
+        assert_eq!(r.basis, "previous stint");
+        assert!(close(r.per_lap, 3.0));
+        assert!(planning_rate(&laps[..2], |l| l.fuel).is_some());
+        assert!(planning_rate(&laps[..1], |l| l.fuel).is_none());
+    }
+
+    #[test]
+    fn saving_per_second_of_coasting() {
+        // 3.1 L at no coasting, 0.1 L less per second of it.
+        let coast = |k: i64| (k % 4) as f64;
+        let laps = stint(12, |k| 3.1 - 0.1 * coast(k), |k| Some(coast(k)));
+        assert!(close(lico_saving_per_s(&laps, |l| l.fuel).unwrap(), 0.1));
+        // All laps alike: nothing to measure it from.
+        let laps = stint(12, |_| 3.0, |_| Some(2.0));
+        assert_eq!(lico_saving_per_s(&laps, |l| l.fuel), None);
+    }
+
+    #[test]
+    fn what_saves_a_stop_and_a_target() {
+        // 50 L in a 100 L tank, 3 L/lap, 0.5 lap reserve, 60 laps: 2 stops.
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(60.0), Some(0.1), Some(2.8)).unwrap();
+        assert_eq!(p.stops, Some(2));
+        let save = p.save_stop.unwrap();
+        assert_eq!(save.stops, 1);
+        assert!(close(save.per_lap, 150.0 / 61.0), "{save:?}");
+        assert!(close(save.saving, 1.0 - 150.0 / 61.0 / 3.0));
+        assert!(close(save.extra_coast_s.unwrap(), (3.0 - 150.0 / 61.0) / 0.1));
+        // Just under that consumption, one stop is indeed enough.
+        let q = energy_plan("L", 50.0, 100.0, stat(3.0), rate(save.per_lap * 0.999), 0.5, Some(60.0), None, None).unwrap();
+        assert_eq!(q.stops, Some(1));
+        let t = p.target.unwrap();
+        assert!(close(t.per_lap, 2.8));
+        assert!(close(t.off_target, 3.0 / 2.8 - 1.0));
+        assert!(close(t.extra_coast_s.unwrap(), 2.0));
+        assert!(close(t.laps_left, (50.0 - 1.4) / 2.8));
+        assert_eq!(t.stops, Some(2));
+        // No stop to save.
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(10.0), None, None).unwrap();
+        assert!(p.save_stop.is_none() && p.target.is_none());
+    }
+
     #[test]
     fn energy_plan_counts_stops() {
         // 100 L tank, 3 L/lap, 0.5 lap reserve (1.5 L), 50 L in, 60 laps to go.
-        let p = energy_plan("L", 50.0, 100.0, stat(3.0), 0.5, Some(60.0)).unwrap();
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(60.0), None, None).unwrap();
         assert!(close(p.reserve, 1.5));
         assert!(close(p.laps_left, 48.5 / 3.0));
         assert!(close(p.needed_to_finish.unwrap(), 181.5));
@@ -719,14 +1053,14 @@ mod tests {
         assert!(close(p.stint_laps_max, 98.5 / 3.0));
         assert_eq!(p.stops, Some(2)); // 131.5 / 98.5 → 2
         // Enough on board: no stop.
-        let p = energy_plan("L", 50.0, 100.0, stat(3.0), 0.5, Some(10.0)).unwrap();
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(10.0), None, None).unwrap();
         assert_eq!((p.to_add, p.stops), (Some(0.0), Some(0)));
         // Unknown race length: no stop count, but laps left still known.
-        let p = energy_plan("L", 50.0, 100.0, stat(3.0), 0.5, None).unwrap();
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, None, None, None).unwrap();
         assert_eq!(p.stops, None);
         assert!(p.laps_left > 16.0);
         // No consumption yet: no plan.
-        assert!(energy_plan("L", 50.0, 100.0, Stat::default(), 0.5, Some(10.0)).is_none());
+        assert!(energy_plan("L", 50.0, 100.0, Stat::default(), rate(0.0), 0.5, Some(10.0), None, None).is_none());
     }
 
     #[test]

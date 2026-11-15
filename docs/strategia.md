@@ -14,7 +14,7 @@ altro giro verde").
 | Sezione | Contenuto | Da dove viene |
 |---|---|---|
 | Intestazione | Giri ancora da fare, tempo rimasto, giro di riferimento, durata dello stint | Tempo/giri di sessione dal gioco; giro di riferimento = mediana degli ultimi giri puliti |
-| Fuel / Virtual energy | Livello, consumo per giro (mediana, con tendenza), giri rimasti, quanto serve per finire, quanto aggiungere, durata di un pieno, riserva | Livello letto a ogni passaggio sul traguardo |
+| Fuel / Virtual energy | Livello, consumo per giro e su quali giri è misurato, LiCo, giri rimasti, quanto serve per finire, quanto aggiungere, durata di un pieno, riserva, cosa serve per una sosta in meno, target | Livello letto a ogni passaggio sul traguardo; pedali e velocità dalla telemetria |
 | Soste | Numero di soste e finestra (primo e ultimo giro utile), con la barra fino alla bandiera | Calcolo dal consumo, dalla durata del pieno e dal limite di stint |
 | Box in … giri | Per "adesso" e per ogni giro della finestra: carburante e VE da aggiungere, soste che restano dopo, tempo da fermo, costo totale | Tempi di lavoro ai box del gioco + perdita in pit lane |
 | Tyres | Giri sul treno attuale, gomma che si consuma di più, giri al limite di usura, calo di passo per giro, gomme nuove sì o no | Usura e tempi sul giro misurati |
@@ -25,8 +25,10 @@ altro giro verde").
 
 - **Consumo**: solo dai giri "verdi" consecutivi. Sono esclusi i giri passati
   dalla pit lane e quelli con bandiera gialla, perché consumano meno e
-  renderebbero il piano ottimista. Il valore usato per pianificare è la mediana
-  degli ultimi 10 giri.
+  renderebbero il piano ottimista. Il valore usato per pianificare è il consumo
+  medio sugli ultimi giri verdi dello stint, al massimo 10. Se il pilota cambia
+  il lift and coast, conta solo dai giri fatti col LiCo nuovo (vedi sotto).
+  Dopo una sosta, finché non c'è un giro verde, vale lo stint precedente.
 - **Carburante e usura** vengono letti solo dal PC che sta guidando: dagli
   altri PC il gioco mostra valori fissi.
 - **Giri ancora da fare**: in una gara a tempo conta il giro in corso, i giri
@@ -59,6 +61,35 @@ altro giro verde").
   Il momento in cui conviene passare alle gomme da bagnato non viene calcolato:
   servirebbero tempi sul giro misurati sul bagnato, che oggi non ci sono.
 
+## Lift and coast (LiCo)
+
+- **Misura**: a ogni giro, i secondi passati sopra i 72 km/h senza gas né freno
+  (entrambi sotto il 5 %). Si legge dai pedali, che il gioco manda per
+  qualsiasi auto: funziona anche dal posto engineer. Una parte di veleggio c'è
+  sempre nella guida normale; quello che conta è come cambia. Il primo giro
+  dopo l'avvio di Pitwall, i giri ai box e quelli con bandiera gialla non hanno
+  il valore.
+- **Il piano segue il LiCo**: quando il veleggio cambia di più di 1 s a giro per
+  almeno due giri di fila, il consumo viene misurato solo dai giri col LiCo
+  nuovo. Il widget scrive *since LiCo changed, N laps* e il LiCo di prima con il
+  suo consumo. Così il piano si aggiorna dopo due giri, sia quando il LiCo
+  aumenta sia quando il pilota smette. Un singolo giro diverso (traffico) non
+  conta come cambio.
+- **Quanto rende un secondo di LiCo**: dalla pendenza del consumo giro per giro
+  rispetto al veleggio, sui giri verdi della sessione. Serve che il pilota
+  abbia già veleggiato in modi diversi (almeno 6 giri, con almeno 1,5 s di
+  differenza); prima i secondi di LiCo necessari non vengono stimati.
+- **Una sosta in meno**: il consumo massimo per giro con cui basta una sosta in
+  meno, il risparmio in percentuale e, se misurato, circa quanti secondi di LiCo
+  in più servono. La riga compare solo se il risparmio è al massimo del 25 %.
+- **Target**: nel campo *target* sotto Virtual energy (o Fuel) scrivi il
+  consumo che chiedi al pilota, per esempio `3.2` per 3,2 %/giro, e premi
+  *Set*. Il widget mostra di quanto è sopra o sotto, i secondi di LiCo
+  necessari (o il margine) e, a quel consumo, giri rimasti, durata di un pieno
+  e soste. Il piano principale resta sul consumo misurato. *Clear* toglie il
+  target. Si può impostare anche dalle impostazioni, anche prima che ci sia un
+  consumo misurato.
+
 ## Impostazioni (⚙ settings nel widget)
 
 | Voce | Predefinito | Effetto |
@@ -68,6 +99,8 @@ altro giro verde").
 | Tyre limit (% tread) | 30 | Sotto questa percentuale di battistrada una gomma è finita |
 | Pit lane loss (s) | misurata | Valore a mano al posto di quello misurato |
 | New tyres at the stop | no | La tabella "Box in" include il cambio di 4 gomme |
+| VE target (%/lap) | nessuno | Consumo di VE chiesto al pilota (vedi *Lift and coast*) |
+| Fuel target (L/lap) | nessuno | Consumo di carburante chiesto al pilota |
 
 Le impostazioni valgono per il bridge o l'hub a cui sei collegato e vengono
 salvate in `%APPDATA%\LMUPitwall\strategy.json`.
@@ -80,5 +113,8 @@ salvate in `%APPDATA%\LMUPitwall\strategy.json`.
   - che il tempo da fermo calcolato sia vicino alla stima del gioco;
   - che il conteggio dei giri a fine gara sia giusto.
 - Le gare a giri usano i giri della tua auto, non quelli del leader.
-- Il consumo non tiene conto della mappa motore o del lift and coast scelti:
-  si adatta da solo nei giri successivi.
+- Il cambio di mappa motore non viene riconosciuto come il LiCo: il consumo si
+  adatta nei giri successivi.
+- Le soglie del LiCo (72 km/h, pedali sotto il 5 %, cambio di 1 s) sono scelte
+  a tavolino e verificate solo con sessioni simulate (`--lico` in
+  `tools/mock-session`): da controllare in gara.

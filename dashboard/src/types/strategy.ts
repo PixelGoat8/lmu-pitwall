@@ -28,6 +28,36 @@ export interface EnergyPlan {
   to_add: number | null
   stint_laps_max: number
   stops: number | null
+  rate: Rate
+  save_stop: SaveStop | null
+  target: EnergyTarget | null
+}
+
+/** The consumption the plan uses and where it comes from. */
+export interface Rate {
+  per_lap: number
+  laps: number
+  basis: 'stint' | 'lico' | 'previous stint' | string
+  /** Lift-and-coast: seconds per lap coasting at speed, off both pedals. */
+  coast_s: number | null
+  coast_before_s: number | null
+  per_lap_before: number | null
+}
+
+export interface SaveStop {
+  stops: number
+  per_lap: number
+  saving: number               // fraction
+  extra_coast_s: number | null
+}
+
+export interface EnergyTarget {
+  per_lap: number
+  off_target: number           // fraction: +0.05 = 5 % over the target
+  laps_left: number
+  stint_laps_max: number
+  stops: number | null
+  extra_coast_s: number | null
 }
 
 export interface PitWindow {
@@ -88,6 +118,8 @@ export interface StrategyConfig {
   tyre_wear_limit: number
   change_tyres: boolean
   pit_lane_loss_s: number | null
+  ve_target_per_lap: number | null    // fraction per lap
+  fuel_target_per_lap: number | null  // litres per lap
 }
 
 export interface StrategyUpdate {

@@ -62,6 +62,8 @@ def main():
     ap.add_argument("--team-class", default="Hyper", choices=["Hyper", "GT3"], help="class of the team car (GT3 = gets lapped by Hypercars)")
     ap.add_argument("--fcy", default="", help='full course yellow as "start-end" in session seconds, e.g. "120-170"')
     ap.add_argument("--penalty-at", type=float, default=-1.0, help="session time the team car gets a penalty (-1 = never)")
+    ap.add_argument("--lico", default="", help='lift-and-coast of the team car as "from_lap:seconds:saving", comma-separated, '
+                    'e.g. "6:3:0.08,10:5:0.13" = from lap 6 coast 3 s a lap for 8 %% less fuel and VE, from lap 10 5 s for 13 %%')
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -71,6 +73,12 @@ def main():
     # The team car: the third Hypercar, or the second GT3.
     player_id = 2 if args.team_class == "Hyper" else (args.cars + 1) // 2 + 1
     fcy = tuple(float(x) for x in args.fcy.split("-")) if args.fcy else None
+    lico = sorted(tuple(float(x) for x in part.split(":")) for part in args.lico.split(",")) if args.lico else []
+
+    def lico_at(lap):
+        """(seconds coasting, saving) on lap number `lap` of the team car."""
+        active = [(s, k) for frm, s, k in lico if lap >= frm]
+        return active[-1] if active else (0.0, 0.0)
 
     cars = []
     for i in range(args.cars):
@@ -154,8 +162,9 @@ def main():
                     fuel = max(0.0, fuel - used)
                     ve = max(0.0, ve - lap_ve_use)
                     recent_fuel.append(used)
-                    lap_fuel_use = fuel_per_lap * (1 + rng.uniform(-0.03, 0.03))
-                    lap_ve_use = VE_PER_LAP * (1 + rng.uniform(-0.03, 0.03))
+                    saving = lico_at(laps + 1)[1]
+                    lap_fuel_use = fuel_per_lap * (1 + rng.uniform(-0.03, 0.03)) * (1 - saving)
+                    lap_ve_use = VE_PER_LAP * (1 + rng.uniform(-0.03, 0.03)) * (1 - saving)
                     stint_laps += 1
                     tyre_age += 1
                     for w in range(4):
@@ -237,7 +246,13 @@ def main():
         frac = total - math.floor(total) if total >= 0 else 0.0
         in_pit = t < pit_until[player_id]
         speed = 0.0 if in_pit else 45 + 35 * math.sin(2 * math.pi * frac * 4)
-        braking = (not in_pit) and math.cos(2 * math.pi * frac * 4) < -0.6
+        def braking_at(f):
+            return math.cos(2 * math.pi * f * 4) < -0.6
+        braking = (not in_pit) and braking_at(frac)
+        # Lift-and-coast: off the throttle for a share of the seconds before
+        # each of the four braking zones.
+        coast_s = lico_at(laps_done[player_id] + 1)[0]
+        coasting = (not in_pit) and not braking and coast_s > 0 and braking_at(frac + coast_s / 4 / cars[player_id]["lap"])
         avg = sum(recent_fuel[-10:]) / len(recent_fuel[-10:]) if recent_fuel else 0.0
         tires = []
         for w in range(4):
@@ -258,7 +273,7 @@ def main():
         emit(t, dict(
             type="TelemetryUpdate", speed_ms=speed, rpm=4000 + speed * 55, max_rpm=8600,
             gear=(0 if in_pit else min(7, 1 + int(speed / 12))),
-            throttle=(0.0 if braking or in_pit else 1.0), brake=(0.9 if braking else 0.0),
+            throttle=(0.0 if braking or in_pit or coasting else 1.0), brake=(0.9 if braking else 0.0),
             clutch=0.0, steering=0.3 * math.sin(2 * math.pi * frac * 6),
             fuel=shown_fuel, fuel_capacity=fuel_cap, water_temp=84.0, oil_temp=96.0, tires=tires,
             position=dict(x=600 * math.cos(ang), y=0.0, z=400 * math.sin(ang)),

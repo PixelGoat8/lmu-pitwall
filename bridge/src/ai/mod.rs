@@ -355,6 +355,28 @@ impl World {
                     "needed_to_finish": e.needed_to_finish.map(|v| r1(v * k)),
                     "to_add": e.to_add.map(|v| r1(v * k)),
                     "full_tank_laps": r1(e.stint_laps_max),
+                    "use_measured_over": format!("{} laps ({})", e.rate.laps, match e.rate.basis.as_str() {
+                        "lico" => "since the driver changed lift-and-coast",
+                        "previous stint" => "previous stint",
+                        _ => "this stint",
+                    }),
+                    "lift_and_coast_s_per_lap": e.rate.coast_s.map(r1),
+                    "lift_and_coast_before_change_s_per_lap": e.rate.coast_before_s.map(r1),
+                    "use_per_lap_before_change": e.rate.per_lap_before.map(|v| r2(v * k)),
+                    "one_stop_fewer": e.save_stop.as_ref().map(|sv| json!({
+                        "stops": sv.stops,
+                        "max_use_per_lap": r2(sv.per_lap * k),
+                        "saving_percent": r1(sv.saving * 100.0),
+                        "extra_lift_and_coast_s_per_lap": sv.extra_coast_s.map(r1),
+                    })),
+                    "engineer_target": e.target.as_ref().map(|t| json!({
+                        "use_per_lap": r2(t.per_lap * k),
+                        "now_over_target_percent": r1(t.off_target * 100.0),
+                        "laps_left_at_target": r1(t.laps_left),
+                        "full_tank_laps_at_target": r1(t.stint_laps_max),
+                        "stops_at_target": t.stops,
+                        "extra_lift_and_coast_s_per_lap": t.extra_coast_s.map(r1),
+                    })),
                 })
             };
             if let Some(f) = &st.fuel {

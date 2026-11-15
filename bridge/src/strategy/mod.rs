@@ -45,6 +45,13 @@ const TELEMETRY_MAX_AGE: Duration = Duration::from_secs(3);
 const PIT_LOSS_RANGE: (f64, f64) = (3.0, 120.0);
 /// Pit lane losses kept per track.
 const PIT_LOSS_KEEP: usize = 10;
+/// Coasting, for lift-and-coast: at least this fast (72 km/h, so slow
+/// corners and the pit lane do not count)…
+const COAST_MIN_SPEED_MS: f64 = 20.0;
+/// …with throttle and brake both under this.
+const COAST_PEDAL: f64 = 0.05;
+/// A lap with fewer telemetry samples than this gets no coasting figure.
+const COAST_MIN_SAMPLES: u32 = 20;
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -68,6 +75,13 @@ pub struct StrategyConfig {
     /// Pit lane loss to use instead of the measured one, seconds.
     #[serde(default)]
     pub pit_lane_loss_s: Option<f64>,
+    /// Virtual energy per lap the engineer asks for, as a fraction (0.032 =
+    /// 3.2 %/lap); `None` = no target.
+    #[serde(default)]
+    pub ve_target_per_lap: Option<f64>,
+    /// Fuel per lap the engineer asks for, litres; `None` = no target.
+    #[serde(default)]
+    pub fuel_target_per_lap: Option<f64>,
 }
 
 fn default_reserve() -> f64 {
@@ -85,6 +99,8 @@ impl Default for StrategyConfig {
             tyre_wear_limit: default_wear_limit(),
             change_tyres: false,
             pit_lane_loss_s: None,
+            ve_target_per_lap: None,
+            fuel_target_per_lap: None,
         }
     }
 }
@@ -96,6 +112,8 @@ impl StrategyConfig {
         self.tyre_wear_limit = self.tyre_wear_limit.clamp(0.0, 0.95);
         self.max_stint_minutes = self.max_stint_minutes.filter(|m| *m > 0.0 && *m < 24.0 * 60.0);
         self.pit_lane_loss_s = self.pit_lane_loss_s.filter(|s| *s > 0.0 && *s < 300.0);
+        self.ve_target_per_lap = self.ve_target_per_lap.filter(|t| *t > 0.0 && *t < 1.0);
+        self.fuel_target_per_lap = self.fuel_target_per_lap.filter(|t| *t > 0.0 && *t < 100.0);
         self
     }
 }
@@ -285,6 +303,12 @@ pub struct Engine {
     stationary_s: f64,
     pending_loss: Option<PendingLoss>,
     stint_start: Option<f64>,
+
+    /// Lift-and-coast on the lap in progress: telemetry samples on track,
+    /// and those coasting. Counted only on a lap watched from its start.
+    lap_samples: u32,
+    lap_coast_samples: u32,
+    lap_watched: bool,
 }
 
 fn n(msg: &Value, key: &str) -> Option<f64> {
@@ -356,6 +380,8 @@ impl Engine {
     }
 
     fn on_telemetry(&mut self, msg: &Value) {
+        // Pedals and speed are live for any car, even from the engineer seat.
+        self.sample_coasting(msg);
         if !self.driving() {
             return;
         }
@@ -373,6 +399,20 @@ impl Engine {
             w.iter().any(|v| *v > 0.0).then_some(w)
         });
         self.trusted_at = Some(Instant::now());
+    }
+
+    /// One telemetry sample towards the lap's coasting: on track, at speed,
+    /// off both pedals. A fraction of samples, so the telemetry rate (or a
+    /// replay speed) does not matter.
+    fn sample_coasting(&mut self, msg: &Value) {
+        let (Some(throttle), Some(brake), Some(speed)) = (n(msg, "throttle"), n(msg, "brake"), n(msg, "speed_ms")) else { return };
+        if self.row.as_ref().map(|r| r.in_pits).unwrap_or(true) {
+            return;
+        }
+        self.lap_samples += 1;
+        if speed >= COAST_MIN_SPEED_MS && throttle < COAST_PEDAL && brake < COAST_PEDAL {
+            self.lap_coast_samples += 1;
+        }
     }
 
     fn on_session_info(&mut self, msg: &Value) {
@@ -475,6 +515,15 @@ impl Engine {
         if completed {
             let fresh = self.trusted_at.map(|at| at.elapsed() < TELEMETRY_MAX_AGE).unwrap_or(false);
             let trusted = fresh && self.driving();
+            let coast_s = (self.lap_watched
+                && self.lap_samples >= COAST_MIN_SAMPLES
+                && row.last_lap_time > 0.0
+                && !self.lap_pit
+                && !self.lap_caution)
+                .then(|| self.lap_coast_samples as f64 / self.lap_samples as f64 * row.last_lap_time);
+            self.lap_samples = 0;
+            self.lap_coast_samples = 0;
+            self.lap_watched = true;
             self.laps.push(LapSample {
                 lap: row.total_laps,
                 session_time: t,
@@ -484,6 +533,7 @@ impl Engine {
                 wear: if trusted { self.wear } else { None },
                 pit: self.lap_pit,
                 caution: self.lap_caution,
+                coast_s,
             });
             self.lap_pit = row.in_pits;
             self.lap_caution = self.game_phase == 6;
@@ -573,10 +623,21 @@ impl Engine {
 
         // --- energy -------------------------------------------------------
         let fuel_per_lap = Stat::of(&consumption(&self.laps, |l| l.fuel));
+        let fuel_rate = planning_rate(&self.laps, |l| l.fuel);
         let fuel_now = self.fuel.or_else(|| self.laps.iter().rev().find_map(|l| l.fuel));
         let fuel_cap = self.pit_info.as_ref().and_then(|p| p.fuel_capacity).or(self.fuel_capacity);
-        let fuel = match (fuel_per_lap, fuel_now, fuel_cap) {
-            (Some(st), Some(now), Some(cap)) => energy_plan("L", now, cap, st, self.cfg.reserve_laps, to_go),
+        let fuel = match (fuel_per_lap, fuel_rate, fuel_now, fuel_cap) {
+            (Some(st), Some(rate), Some(now), Some(cap)) => energy_plan(
+                "L",
+                now,
+                cap,
+                st,
+                rate,
+                self.cfg.reserve_laps,
+                to_go,
+                lico_saving_per_s(&self.laps, |l| l.fuel),
+                self.cfg.fuel_target_per_lap,
+            ),
             _ => None,
         };
         if fuel.is_none() {
@@ -589,7 +650,19 @@ impl Engine {
         let has_ve = row.ve > 0.0 || self.laps.iter().any(|l| l.ve.is_some());
         let ve = if has_ve {
             let st = Stat::of(&consumption(&self.laps, |l| l.ve));
-            let plan = st.and_then(|st| energy_plan("%", row.ve, 1.0, st, self.cfg.reserve_laps, to_go));
+            let plan = st.zip(planning_rate(&self.laps, |l| l.ve)).and_then(|(st, rate)| {
+                energy_plan(
+                    "%",
+                    row.ve,
+                    1.0,
+                    st,
+                    rate,
+                    self.cfg.reserve_laps,
+                    to_go,
+                    lico_saving_per_s(&self.laps, |l| l.ve),
+                    self.cfg.ve_target_per_lap,
+                )
+            });
             if plan.is_none() {
                 notes.push("Virtual energy use needs two consecutive green laps.".into());
             }
@@ -890,6 +963,32 @@ mod tests {
     }
 
     #[test]
+    fn coasting_is_measured_from_the_pedals() {
+        let mut e = Engine::new(StrategyConfig::default(), PitLossStore::default());
+        e.on_message(&session_info());
+        let pedals = |throttle: f64, brake: f64, speed: f64| {
+            v(serde_json::json!({"type": "TelemetryUpdate", "throttle": throttle, "brake": brake, "speed_ms": speed}))
+        };
+        let mut t = 0.0;
+        e.on_message(&scoring(t, 0, 10.0, false, 0, -1.0, 1.0, 2));
+        for lap in 0..3 {
+            // 100 samples: 10 coasting at speed, 5 off the pedals but slow
+            // (a hairpin), the rest on a pedal.
+            for i in 0..100 {
+                let m = if i < 10 { pedals(0.0, 0.0, 60.0) } else if i < 15 { pedals(0.0, 0.0, 12.0) } else { pedals(1.0, 0.0, 70.0) };
+                e.on_message(&m);
+            }
+            t += 90.0;
+            e.on_message(&scoring(t, lap + 1, 10.0, false, 0, 90.0, 1.0 - 0.04 * (lap + 1) as f64, 2));
+        }
+        // The first lap was not watched from its start; then 10 % of 90 s.
+        // Measured from the engineer seat too (control 2).
+        let coast: Vec<Option<f64>> = e.laps.iter().map(|l| l.coast_s).collect();
+        assert_eq!(coast[0], None);
+        assert!(coast[1..].iter().all(|c| (c.unwrap() - 9.0).abs() < 1e-9), "{coast:?}");
+    }
+
+    #[test]
     fn a_stint_time_limit_can_force_a_stop() {
         let cfg = StrategyConfig { max_stint_minutes: Some(20.0), ..Default::default() };
         let mut e = Engine::new(cfg, PitLossStore::default());
@@ -931,7 +1030,9 @@ mod tests {
 
     #[test]
     fn settings_are_clamped() {
-        let c = StrategyConfig { reserve_laps: 99.0, tyre_wear_limit: -1.0, max_stint_minutes: Some(0.0), pit_lane_loss_s: Some(-5.0), change_tyres: true }.sanitized();
+        let c = StrategyConfig { reserve_laps: 99.0, tyre_wear_limit: -1.0, max_stint_minutes: Some(0.0), pit_lane_loss_s: Some(-5.0), change_tyres: true, ve_target_per_lap: Some(3.2), fuel_target_per_lap: Some(2.9) }.sanitized();
         assert_eq!((c.reserve_laps, c.tyre_wear_limit, c.max_stint_minutes, c.pit_lane_loss_s), (5.0, 0.0, None, None));
+        // A VE target is a fraction: 3.2 (meant as %) is out of range; litres are fine.
+        assert_eq!((c.ve_target_per_lap, c.fuel_target_per_lap), (None, Some(2.9)));
     }
 }
