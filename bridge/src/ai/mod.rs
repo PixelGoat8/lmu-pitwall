@@ -676,7 +676,8 @@ impl Ai {
     /// The trigger for an automatic comment due now, if any.
     fn due(&mut self) -> Option<String> {
         let st = self.world.strategy.as_ref()?;
-        if self.busy || self.blocked().is_some() {
+        // Nothing useful to say before the first lap: no pace, no consumption.
+        if self.busy || self.blocked().is_some() || st.laps_completed < 1 {
             return None;
         }
         let spaced = self.last_auto.map(|t| t.elapsed().as_secs_f64() >= self.cfg.min_interval_s).unwrap_or(true);

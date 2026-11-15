@@ -344,6 +344,7 @@ export interface HubError {
 
 import type { PitInfoMsg, StrategyUpdate } from './strategy'
 import type { RaceTiming } from './race'
+import type { AiFeed } from './ai'
 
 export type ServerMessage =
   | TelemetryUpdate
@@ -361,3 +362,4 @@ export type ServerMessage =
   | StrategyUpdate
   | PitInfoMsg
   | RaceTiming
+  | AiFeed

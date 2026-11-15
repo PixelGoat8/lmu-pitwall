@@ -14,6 +14,7 @@ import StrategyWidget from './widgets/StrategyWidget'
 import TrafficWidget from './widgets/TrafficWidget'
 import RivalsWidget from './widgets/RivalsWidget'
 import EventsWidget from './widgets/EventsWidget'
+import AiWidget from './widgets/AiWidget'
 import SessionInfo from './widgets/SessionInfo'
 import WeatherWidget from './widgets/WeatherWidget'
 import ConnectionStatus from './widgets/ConnectionStatus'
@@ -122,6 +123,13 @@ export const WIDGET_REGISTRY: Record<string, WidgetMeta> = {
     id: 'EventsWidget',
     name: 'Race events',
     component: EventsWidget,
+    defaultSize: { w: 5, h: 5 },
+    minSize: { w: 3, h: 3 },
+  },
+  AiWidget: {
+    id: 'AiWidget',
+    name: 'AI engineer',
+    component: AiWidget,
     defaultSize: { w: 5, h: 5 },
     minSize: { w: 3, h: 3 },
   },

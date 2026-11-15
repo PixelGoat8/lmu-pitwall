@@ -126,6 +126,7 @@ const ENGINEER_WIDGETS: WidgetConfig[] = [
   { id: 'strategy-1',   widgetType: 'StrategyWidget' },
   { id: 'rivals-1',     widgetType: 'RivalsWidget' },
   { id: 'events-1',     widgetType: 'EventsWidget' },
+  { id: 'ai-1',         widgetType: 'AiWidget' },
   { id: 'map-1',        widgetType: 'TrackMap' },
   { id: 'standings-1',  widgetType: 'Standings' },
 ]
@@ -138,8 +139,9 @@ const ENGINEER_LG = [
   { i: 'strategy-1',   x: 0, y: 3,  w: 7, h: 9, minW: 4, minH: 4 },
   { i: 'rivals-1',     x: 7, y: 3,  w: 5, h: 5, minW: 4, minH: 3 },
   { i: 'events-1',     x: 7, y: 8,  w: 5, h: 4, minW: 3, minH: 3 },
-  { i: 'map-1',        x: 0, y: 12, w: 5, h: 5, minW: 3, minH: 3 },
-  { i: 'standings-1',  x: 5, y: 12, w: 7, h: 5, minW: 4, minH: 3 },
+  { i: 'ai-1',         x: 0, y: 12, w: 7, h: 5, minW: 3, minH: 3 },
+  { i: 'map-1',        x: 7, y: 12, w: 5, h: 5, minW: 3, minH: 3 },
+  { i: 'standings-1',  x: 0, y: 17, w: 12, h: 5, minW: 4, minH: 3 },
 ]
 
 // Stream: minimal — Gear, Speed, RPM, Lap for overlay/stream use
