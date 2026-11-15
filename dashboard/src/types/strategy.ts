@@ -42,6 +42,7 @@ export interface Rate {
   coast_s: number | null
   coast_before_s: number | null
   per_lap_before: number | null
+  last_lap: number | null
 }
 
 export interface SaveStop {

@@ -26,9 +26,16 @@ altro giro verde").
 - **Consumo**: solo dai giri "verdi" consecutivi. Sono esclusi i giri passati
   dalla pit lane e quelli con bandiera gialla, perché consumano meno e
   renderebbero il piano ottimista. Il valore usato per pianificare è il consumo
-  medio sugli ultimi giri verdi dello stint, al massimo 10. Se il pilota cambia
-  il lift and coast, conta solo dai giri fatti col LiCo nuovo (vedi sotto).
-  Dopo una sosta, finché non c'è un giro verde, vale lo stint precedente.
+  medio sugli ultimi 5 giri verdi dello stint: abbastanza per smorzare
+  l'imprecisione della lettura sul traguardo, pochi per seguire un pilota che
+  risparmia a poco a poco. Se il pilota cambia il lift and coast, conta solo dai
+  giri fatti col LiCo nuovo (vedi sotto). Dopo una sosta, finché non ci sono
+  due giri verdi, vale lo stint precedente. Accanto c'è il consumo dell'ultimo
+  giro da solo.
+- **Rispetto all'HUD del gioco**: la stima dei giri del gioco non è leggibile
+  da Pitwall e pesa di più gli ultimissimi giri. Dopo un finale di stint in
+  risparmio dà qualche giro in più del nostro; il primo giro del nuovo stint
+  di solito torna a consumare come la media.
 - **Carburante e usura** vengono letti solo dal PC che sta guidando: dagli
   altri PC il gioco mostra valori fissi.
 - **Giri ancora da fare**: in una gara a tempo conta il giro in corso, i giri

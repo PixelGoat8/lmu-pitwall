@@ -18,6 +18,10 @@ const MIN_TREND_SAMPLES: usize = 4;
 const CLEAN_LAP_FACTOR: f64 = 1.07;
 /// Rows in the "pit in N laps" table.
 const MAX_WHATIF_ROWS: usize = 8;
+/// The plan's consumption is averaged over at most this many green laps of
+/// the stint: enough to smooth the reading jitter at the line, few enough to
+/// follow a driver who saves fuel gradually rather than in one step.
+pub const PLAN_WINDOW: usize = 5;
 /// A change of this many seconds of coasting per lap counts as the driver
 /// changing lift-and-coast.
 pub const LICO_STEP_S: f64 = 1.0;
@@ -210,7 +214,7 @@ pub struct Rate {
     pub per_lap: f64,
     /// Laps it is measured over.
     pub laps: u32,
-    /// "stint": the green laps of this stint (the last `STATS_WINDOW` at
+    /// "stint": the green laps of this stint (the last `PLAN_WINDOW` at
     /// most); "lico": only the laps since the driver changed lift-and-coast;
     /// "previous stint": nothing measured since the last stop yet.
     pub basis: String,
@@ -220,6 +224,8 @@ pub struct Rate {
     pub coast_before_s: Option<f64>,
     /// With basis "lico": consumption before the change.
     pub per_lap_before: Option<f64>,
+    /// The last green lap on its own.
+    pub last_lap: Option<f64>,
 }
 
 /// Where the driver last changed coasting within the laps `first..=last`:
@@ -264,15 +270,17 @@ pub fn planning_rate(laps: &[LapSample], pick: impl Fn(&LapSample) -> Option<f64
     let runs = green_runs(laps, &pick);
     let &(s, e) = runs.last()?;
     let current = e + 1 == laps.len();
-    // Consumption laps are s+1..=e; at most the last STATS_WINDOW of them.
-    let first = (s + 1).max((e + 1).saturating_sub(STATS_WINDOW));
+    // Consumption laps are s+1..=e; at most the last PLAN_WINDOW of them.
+    let first = (s + 1).max((e + 1).saturating_sub(PLAN_WINDOW));
     let rate_over = |from: usize, to: usize| -> Option<f64> {
         let (a, b) = (pick(&laps[from - 1])?, pick(&laps[to])?);
         let n = (laps[to].lap - laps[from - 1].lap) as f64;
         (n > 0.0 && a > b).then(|| (a - b) / n)
     };
     let coast = |from: usize, to: usize| median(&laps[from..=to].iter().filter_map(|l| l.coast_s).collect::<Vec<_>>());
-    let change = if current { lico_change(laps, s + 1, e) } else { None };
+    let last_lap = rate_over(e, e);
+    // A change further back than the window is already out of the average.
+    let change = if current { lico_change(laps, s + 1, e).filter(|j| *j >= first) } else { None };
     if let Some(j) = change {
         return Some(Rate {
             per_lap: rate_over(j, e)?,
@@ -281,6 +289,7 @@ pub fn planning_rate(laps: &[LapSample], pick: impl Fn(&LapSample) -> Option<f64
             coast_s: coast(j, e),
             coast_before_s: coast(s + 1, j - 1),
             per_lap_before: rate_over(s + 1, j - 1),
+            last_lap,
         });
     }
     Some(Rate {
@@ -290,6 +299,7 @@ pub fn planning_rate(laps: &[LapSample], pick: impl Fn(&LapSample) -> Option<f64
         coast_s: coast(first, e),
         coast_before_s: None,
         per_lap_before: None,
+        last_lap,
     })
 }
 
@@ -943,7 +953,7 @@ mod tests {
     }
 
     fn rate(per_lap: f64) -> Rate {
-        Rate { per_lap, laps: 3, basis: "stint".into(), coast_s: None, coast_before_s: None, per_lap_before: None }
+        Rate { per_lap, laps: 3, basis: "stint".into(), coast_s: None, coast_before_s: None, per_lap_before: None, last_lap: None }
     }
 
     /// Laps 1..=n from 90 L; lap k uses `use_of(k)` litres with `coast_of(k)` s coasting.
@@ -986,12 +996,13 @@ mod tests {
     fn one_lap_in_traffic_is_not_a_lico_change() {
         let laps = stint(12, |k| if k == 11 { 2.6 } else { 3.0 }, |k| Some(if k == 11 { 6.0 } else { 1.0 }));
         let r = planning_rate(&laps, |l| l.fuel).unwrap();
-        assert_eq!((r.basis.as_str(), r.laps), ("stint", 10));
-        // Without any coasting figure: the stint, last ten laps.
+        assert_eq!((r.basis.as_str(), r.laps), ("stint", PLAN_WINDOW as u32));
+        // Without any coasting figure: the stint, last laps only.
         let laps = stint(14, |_| 3.0, |_| None);
         let r = planning_rate(&laps, |l| l.fuel).unwrap();
-        assert_eq!((r.basis.as_str(), r.laps), ("stint", 10));
+        assert_eq!((r.basis.as_str(), r.laps), ("stint", PLAN_WINDOW as u32));
         assert!(close(r.per_lap, 3.0));
+        assert!(close(r.last_lap.unwrap(), 3.0));
     }
 
     #[test]

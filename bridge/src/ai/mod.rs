@@ -360,6 +360,7 @@ impl World {
                         "previous stint" => "previous stint",
                         _ => "this stint",
                     }),
+                    "use_last_lap": e.rate.last_lap.map(|v| r2(v * k)),
                     "lift_and_coast_s_per_lap": e.rate.coast_s.map(r1),
                     "lift_and_coast_before_change_s_per_lap": e.rate.coast_before_s.map(r1),
                     "use_per_lap_before_change": e.rate.per_lap_before.map(|v| r2(v * k)),

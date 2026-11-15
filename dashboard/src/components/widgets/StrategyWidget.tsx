@@ -118,6 +118,7 @@ function EnergyColumn({ title, e, kind, cfg }: { title: string; e: EnergyPlan; k
       <span style={line} title={`Used by the plan: measured over ${rateBasis(e)}. A change of lift-and-coast restarts the measurement, so the plan follows it within two laps.`}>
         <b style={{ color: colors.text }}>{fmtEnergy(e.planning_per_lap, u, 2)}/lap</b>
         <span> · {rateBasis(e)}</span>
+        {r.last_lap !== null ? <span title="The last green lap on its own"> · last lap {fmtEnergy(r.last_lap, u, 2)}</span> : null}
       </span>
       {r.coast_s !== null ? (
         <span style={line} title="Lift-and-coast: seconds per lap at speed (over 72 km/h) with neither throttle nor brake. Some of it is normal driving; what matters is the change.">
