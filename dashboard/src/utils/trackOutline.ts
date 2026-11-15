@@ -316,6 +316,31 @@ function storedKey(name: string): string {
   return 'lmu-trackmap-' + name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()
 }
 
+/** A lap's two ends are this close (m): it closes on itself across the line. */
+const MAX_CLOSE_M = 200
+/** No stretch of the lap longer than this (m of lap distance) without a point. */
+const MAX_HOLE_M = 150
+const MIN_USABLE_POINTS = 50
+
+/**
+ * Whether a record claiming to be a whole lap really is one: it closes on
+ * itself and has no holes. Older versions of the recorder could stop adding
+ * points after one late update and still save the lap as complete — a
+ * fragment of track that then stayed on every dashboard and stopped any new
+ * recording. Such a record is treated as no record at all.
+ */
+export function isUsableOutline(o: TrackOutline): boolean {
+  const pts = o.points
+  if (pts.length < MIN_USABLE_POINTS) return false
+  const a = pts[0]
+  const b = pts[pts.length - 1]
+  if (Math.hypot(a.x - b.x, a.z - b.z) > MAX_CLOSE_M) return false
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].d >= 0 && pts[i - 1].d >= 0 && pts[i].d - pts[i - 1].d > MAX_HOLE_M) return false
+  }
+  return true
+}
+
 /** Bring a stored record up to the current shape, or reject it as unusable. */
 function migrate(raw: unknown): TrackOutline | null {
   if (!raw || typeof raw !== 'object') return null
@@ -333,7 +358,7 @@ function migrate(raw: unknown): TrackOutline | null {
     }
   })
 
-  return {
+  const outline: TrackOutline = {
     version,
     trackName: o.trackName ?? '',
     points,
@@ -342,6 +367,7 @@ function migrate(raw: unknown): TrackOutline | null {
     sector1Dist: typeof o.sector1Dist === 'number' ? o.sector1Dist : -1,
     sector2Dist: typeof o.sector2Dist === 'number' ? o.sector2Dist : -1,
   }
+  return outline.complete && !isUsableOutline(outline) ? null : outline
 }
 
 /** A record as JSON text (from the bridge), or null if unusable. */
@@ -356,7 +382,7 @@ export function parseOutline(json: string | null): TrackOutline | null {
  * the current one lacks.
  */
 export function isBetterOutline(next: TrackOutline | null, current: TrackOutline | null): boolean {
-  if (!next?.complete) return false
+  if (!next?.complete || !isUsableOutline(next)) return false
   if (!current?.complete) return true
   if (next.version !== current.version) return next.version > current.version
   return hasSectors(next) && !hasSectors(current)
