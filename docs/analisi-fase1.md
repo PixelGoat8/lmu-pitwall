@@ -77,9 +77,12 @@ Misurate il 2026-11-14 su LMU 1.4.2, in una sessione offline di prove a Monza
    stima della sosta, carburante e gomme in `/rest/strategy/usage`) descrive
    solo la mia auto. **Il bridge sul PC di chi guida resta necessario.**
 
-   Resta un caso non misurato: l'auto condivisa in un evento a squadre, dove
-   sono iscritto sulla stessa auto del pilota. Lì il gioco potrebbe darmi i
-   dati completi. Serve una prova con un compagno.
+   **Misurato anche nella modalità engineer nativa di LMU** (2026-11-15, gara
+   online a Bahrain da engineer dell'auto del team): `playerHasVehicle` = 0,
+   tutte le auto in controllo remoto. Dell'auto del team si vedono pedali,
+   giri motore, passo e VE (reali), ma carburante, usura e freni sono gli
+   stessi valori fissi delle altre auto, e anche la REST dei box mostra metà
+   serbatoio e gomme nuove. Il bridge sul PC di chi guida resta necessario.
 3. **Meteo e VE dove?**
    - Meteo attuale: shared memory (scoring), e anche REST `RepairAndRefuel.currentWeather`.
    - Previsione (5 nodi): solo REST, `/rest/sessions/weather`.

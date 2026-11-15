@@ -162,8 +162,26 @@ car only**. `/rest/strategy/usage` lists all 14 drivers with `lap`, `stint`,
 car, but not its fuel, tyre wear, tyre or brake temperatures, or electronics.
 Those need a bridge on the PC of whoever is driving.
 
-**Not measured:** a shared car in a team event, where the engineer is entered
-on the same car as the driver. That needs a session with a teammate.
+### LMU's native engineer mode (measured 2026-11-15)
+
+Online race at Bahrain (LMGT3, 38 cars), joined as the engineer of a team car
+while a teammate drove it:
+
+| What | Value |
+|---|---|
+| `playerHasVehicle` | 0 |
+| `mIsPlayer` | 0 on every car, the team car included |
+| `mControl` | 2 (remote) on every car |
+| Team car telemetry: fuel, tyre wear, brake temperature | placeholders, like any other car (fuel exactly half the tank, wear 1.0, brakes static) |
+| Team car: tyre temperatures and pressures, electronics | not published (0) |
+| All cars: throttle, RPM, speed, position | live |
+| All cars: `mVirtualEnergy` | live (changes lap by lap) |
+| `RepairAndRefuel` | describes the team car (its driver roster, its pit menu), but `fuelInfo.currentFuel` is half of `maxFuel` and `wearables.tires` is 1.0: the same placeholders |
+| `/rest/strategy/usage` | every driver with `lap`, `stint`, `pit`, `ve`; nobody has `fuel` or `tyres` |
+
+So the engineer seat shows the team car no better than any other car: VE,
+pace and inputs yes; fuel, tyres, brakes and electronics no. The bridge on the
+driving PC is required for those.
 
 The own car's tyre temperatures and pressures also read 0 while the car sits
 in the garage; they are live only on track.
@@ -219,7 +237,7 @@ game's writer, so the copy under it must stay short.
 
 ## Still to verify
 
-1. **Shared team car:** what the engineer sees when entered on the same car as the driver.
+1. ~~Shared team car / engineer mode~~: measured, see above.
 2. **Spectator / engineer:** `playerHasVehicle`, `playerVehicleIdx`, the team
    car's telemetry row, and whether the REST garage endpoints answer for the
    team car.
