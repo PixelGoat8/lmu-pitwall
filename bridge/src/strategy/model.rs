@@ -407,9 +407,21 @@ pub struct SaveStop {
     pub extra_coast_s: Option<f64>,
 }
 
+/// What the engineer asks for: a consumption per lap, or making it to the
+/// end of a given lap (then the consumption follows from what is left).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TargetSpec {
+    PerLap(f64),
+    /// Box at the end of lap `lap`, `laps_to_box` laps from where the car is.
+    BoxAfter { lap: i64, laps_to_box: f64 },
+}
+
 /// A consumption set by hand, and the race it gives.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Target {
+    /// Set as "box at the end of this lap"; `None` when set per lap.
+    pub box_lap: Option<i64>,
+    pub laps_to_box: Option<f64>,
     pub per_lap: f64,
     /// Consumption now against the target, as a fraction: +0.05 = 5 % over.
     pub off_target: f64,
@@ -451,7 +463,7 @@ pub fn energy_plan(
     reserve_laps: f64,
     laps_to_go: Option<f64>,
     saving_per_coast_s: Option<f64>,
-    target: Option<f64>,
+    target: Option<TargetSpec>,
 ) -> Option<EnergyPlan> {
     let use_per_lap = rate.per_lap;
     if use_per_lap <= 0.0 || capacity <= 0.0 {
@@ -468,9 +480,29 @@ pub fn energy_plan(
         }),
         _ => None,
     };
-    let target = target.filter(|t| *t > 0.0).map(|t| {
+    let target = target.and_then(|spec| {
+        let (t, box_lap, laps_to_box) = match spec {
+            TargetSpec::PerLap(t) => (t, None, None),
+            // What is left, less the reserve kept at that consumption, over
+            // the laps to the stop: c = now / (laps + reserve_laps).
+            TargetSpec::BoxAfter { lap, laps_to_box } => {
+                (now / (laps_to_box + reserve_laps.max(0.0)), Some(lap), Some(laps_to_box))
+            }
+        };
+        if !(t > 0.0 && t.is_finite()) || laps_to_box.is_some_and(|l| l <= 0.0) {
+            return None;
+        }
         let (laps_left, stint_laps_max, _, _, stops) = tank_at(t, now, capacity, reserve_laps, laps_to_go);
-        Target { per_lap: t, off_target: use_per_lap / t - 1.0, laps_left, stint_laps_max, stops, extra_coast_s: coast_for(t) }
+        Some(Target {
+            box_lap,
+            laps_to_box,
+            per_lap: t,
+            off_target: use_per_lap / t - 1.0,
+            laps_left,
+            stint_laps_max,
+            stops,
+            extra_coast_s: coast_for(t),
+        })
     });
     Some(EnergyPlan {
         unit: unit.into(),
@@ -1032,7 +1064,7 @@ mod tests {
     #[test]
     fn what_saves_a_stop_and_a_target() {
         // 50 L in a 100 L tank, 3 L/lap, 0.5 lap reserve, 60 laps: 2 stops.
-        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(60.0), Some(0.1), Some(2.8)).unwrap();
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(60.0), Some(0.1), Some(TargetSpec::PerLap(2.8))).unwrap();
         assert_eq!(p.stops, Some(2));
         let save = p.save_stop.unwrap();
         assert_eq!(save.stops, 1);
@@ -1051,6 +1083,18 @@ mod tests {
         // No stop to save.
         let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(10.0), None, None).unwrap();
         assert!(p.save_stop.is_none() && p.target.is_none());
+        // Box at the end of lap 40, 19.5 laps away, 0.5 lap reserve: 50 / 20 = 2.5 L a lap,
+        // and at that consumption the tank lasts exactly to the stop.
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(60.0), None,
+            Some(TargetSpec::BoxAfter { lap: 40, laps_to_box: 19.5 })).unwrap();
+        let t = p.target.unwrap();
+        assert_eq!((t.box_lap, t.laps_to_box), (Some(40), Some(19.5)));
+        assert!(close(t.per_lap, 2.5));
+        assert!(close(t.laps_left, 19.5));
+        // A stop lap already behind: no target.
+        let p = energy_plan("L", 50.0, 100.0, stat(3.0), rate(3.0), 0.5, Some(60.0), None,
+            Some(TargetSpec::BoxAfter { lap: 10, laps_to_box: -0.5 })).unwrap();
+        assert!(p.target.is_none());
     }
 
     #[test]

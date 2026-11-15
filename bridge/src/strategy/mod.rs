@@ -82,6 +82,13 @@ pub struct StrategyConfig {
     /// Fuel per lap the engineer asks for, litres; `None` = no target.
     #[serde(default)]
     pub fuel_target_per_lap: Option<f64>,
+    /// Target set in laps instead: make the virtual energy last to the end
+    /// of this lap. Wins over `ve_target_per_lap`.
+    #[serde(default)]
+    pub ve_target_box_lap: Option<i64>,
+    /// The same for fuel.
+    #[serde(default)]
+    pub fuel_target_box_lap: Option<i64>,
 }
 
 fn default_reserve() -> f64 {
@@ -101,6 +108,8 @@ impl Default for StrategyConfig {
             pit_lane_loss_s: None,
             ve_target_per_lap: None,
             fuel_target_per_lap: None,
+            ve_target_box_lap: None,
+            fuel_target_box_lap: None,
         }
     }
 }
@@ -114,6 +123,8 @@ impl StrategyConfig {
         self.pit_lane_loss_s = self.pit_lane_loss_s.filter(|s| *s > 0.0 && *s < 300.0);
         self.ve_target_per_lap = self.ve_target_per_lap.filter(|t| *t > 0.0 && *t < 1.0);
         self.fuel_target_per_lap = self.fuel_target_per_lap.filter(|t| *t > 0.0 && *t < 100.0);
+        self.ve_target_box_lap = self.ve_target_box_lap.filter(|l| *l > 0 && *l < 100_000);
+        self.fuel_target_box_lap = self.fuel_target_box_lap.filter(|l| *l > 0 && *l < 100_000);
         self
     }
 }
@@ -309,6 +320,16 @@ pub struct Engine {
     lap_samples: u32,
     lap_coast_samples: u32,
     lap_watched: bool,
+}
+
+/// The engineer's target for one energy: "box at the end of lap N" if set,
+/// else a consumption per lap. `laps_completed + lap_progress` is where the
+/// car is now.
+fn target_spec(box_lap: Option<i64>, per_lap: Option<f64>, laps_completed: i64, lap_progress: f64) -> Option<TargetSpec> {
+    match box_lap {
+        Some(lap) => Some(TargetSpec::BoxAfter { lap, laps_to_box: lap as f64 - (laps_completed as f64 + lap_progress) }),
+        None => per_lap.map(TargetSpec::PerLap),
+    }
 }
 
 fn n(msg: &Value, key: &str) -> Option<f64> {
@@ -636,7 +657,7 @@ impl Engine {
                 self.cfg.reserve_laps,
                 to_go,
                 lico_saving_per_s(&self.laps, |l| l.fuel),
-                self.cfg.fuel_target_per_lap,
+                target_spec(self.cfg.fuel_target_box_lap, self.cfg.fuel_target_per_lap, row.total_laps, p),
             ),
             _ => None,
         };
@@ -660,7 +681,7 @@ impl Engine {
                     self.cfg.reserve_laps,
                     to_go,
                     lico_saving_per_s(&self.laps, |l| l.ve),
-                    self.cfg.ve_target_per_lap,
+                    target_spec(self.cfg.ve_target_box_lap, self.cfg.ve_target_per_lap, row.total_laps, p),
                 )
             });
             if plan.is_none() {
@@ -1030,9 +1051,10 @@ mod tests {
 
     #[test]
     fn settings_are_clamped() {
-        let c = StrategyConfig { reserve_laps: 99.0, tyre_wear_limit: -1.0, max_stint_minutes: Some(0.0), pit_lane_loss_s: Some(-5.0), change_tyres: true, ve_target_per_lap: Some(3.2), fuel_target_per_lap: Some(2.9) }.sanitized();
+        let c = StrategyConfig { reserve_laps: 99.0, tyre_wear_limit: -1.0, max_stint_minutes: Some(0.0), pit_lane_loss_s: Some(-5.0), change_tyres: true, ve_target_per_lap: Some(3.2), fuel_target_per_lap: Some(2.9), ve_target_box_lap: Some(-3), fuel_target_box_lap: Some(170) }.sanitized();
         assert_eq!((c.reserve_laps, c.tyre_wear_limit, c.max_stint_minutes, c.pit_lane_loss_s), (5.0, 0.0, None, None));
         // A VE target is a fraction: 3.2 (meant as %) is out of range; litres are fine.
         assert_eq!((c.ve_target_per_lap, c.fuel_target_per_lap), (None, Some(2.9)));
+        assert_eq!((c.ve_target_box_lap, c.fuel_target_box_lap), (None, Some(170)));
     }
 }

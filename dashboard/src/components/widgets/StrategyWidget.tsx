@@ -100,7 +100,7 @@ function rateBasis(e: EnergyPlan): string {
   return `this stint, ${laps}`
 }
 
-function EnergyColumn({ title, e, kind, cfg }: { title: string; e: EnergyPlan; kind: 've' | 'fuel'; cfg: StrategyConfig }) {
+function EnergyColumn({ title, e, kind, cfg, lapsCompleted }: { title: string; e: EnergyPlan; kind: 've' | 'fuel'; cfg: StrategyConfig; lapsCompleted: number }) {
   const u = e.unit
   const digits = u === '%' ? 1 : 1
   const r = e.rate
@@ -114,6 +114,11 @@ function EnergyColumn({ title, e, kind, cfg }: { title: string; e: EnergyPlan; k
       <span style={{ fontFamily: fonts.mono, fontSize: 18, color: colors.text }}>
         {fmtEnergy(e.now, u, digits)}
         <span style={{ fontSize: 13, color: colors.textMuted }}> · {fmtNum(e.laps_left, 1)} laps</span>
+        {r.last_lap !== null && r.last_lap > 0 ? (
+          <span style={{ fontSize: 13, color: colors.textMuted }} title="Laps left if every lap used what the last one did — closer to how the game's HUD counts">
+            {' '}({fmtNum(Math.max(0, (e.now - e.reserve) / r.last_lap), 1)} at last lap's use)
+          </span>
+        ) : null}
       </span>
       <span style={line} title={`Used by the plan: measured over ${rateBasis(e)}. A change of lift-and-coast restarts the measurement, so the plan follows it within two laps.`}>
         <b style={{ color: colors.text }}>{fmtEnergy(e.planning_per_lap, u, 2)}/lap</b>
@@ -145,7 +150,7 @@ function EnergyColumn({ title, e, kind, cfg }: { title: string; e: EnergyPlan; k
           <span style={{ color: sv.saving > 0.1 ? colors.danger : colors.accent }}>)</span>
         </span>
       ) : null}
-      <TargetLine e={e} t={t} kind={kind} cfg={cfg} />
+      <TargetLine e={e} t={t} kind={kind} cfg={cfg} lapsCompleted={lapsCompleted} />
     </div>
   )
 }
@@ -154,40 +159,66 @@ function EnergyColumn({ title, e, kind, cfg }: { title: string; e: EnergyPlan; k
  * The engineer's target consumption: a field to set it, and once set, how far
  * off the driver is and what the target gives.
  */
-function TargetLine({ e, t, kind, cfg }: { e: EnergyPlan; t: EnergyPlan['target']; kind: 've' | 'fuel'; cfg: StrategyConfig }) {
+function TargetLine({ e, t, kind, cfg, lapsCompleted }: { e: EnergyPlan; t: EnergyPlan['target']; kind: 've' | 'fuel'; cfg: StrategyConfig; lapsCompleted: number }) {
   const u = e.unit
   const pct = u === '%'
+  // Set in laps ("box at the end of lap N") or per lap; laps unless a
+  // per-lap target is the one in force.
+  const [mode, setMode] = useState<'laps' | 'per lap'>(t && t.box_lap === null ? 'per lap' : 'laps')
   const [draft, setDraft] = useState('')
-  const send = (v: number | null) => {
-    const config: StrategyConfig = kind === 've' ? { ...cfg, ve_target_per_lap: v } : { ...cfg, fuel_target_per_lap: v }
+  const send = (boxLap: number | null, perLap: number | null) => {
+    const config: StrategyConfig = kind === 've'
+      ? { ...cfg, ve_target_box_lap: boxLap, ve_target_per_lap: perLap }
+      : { ...cfg, fuel_target_box_lap: boxLap, fuel_target_per_lap: perLap }
     sendBridgeCommand({ command: 'strategy_config', config })
     setDraft('')
   }
   const set = () => {
-    const n = Number(draft.replace(',', '.'))
-    if (draft.trim() === '' || !isFinite(n) || n <= 0) return
-    send(pct ? n / 100 : n)
+    const text = draft.trim().replace(',', '.')
+    const n = Number(text.replace(/^\+/, ''))
+    if (text === '' || !isFinite(n) || n <= 0) return
+    if (mode === 'laps') {
+      // "+12" = twelve laps from now; "170" = the end of lap 170.
+      const lap = text.startsWith('+') ? lapsCompleted + Math.round(n) : Math.round(n)
+      if (lap > lapsCompleted) send(lap, null)
+    } else {
+      send(null, pct ? n / 100 : n)
+    }
   }
   const over = t ? t.off_target : 0
+  const unitText = mode === 'laps' ? 'box at lap' : pct ? '%/lap' : 'L/lap'
+  const placeholder = mode === 'laps'
+    ? (t?.box_lap != null ? String(t.box_lap) : `${Math.floor(lapsCompleted + e.laps_left)} or +N`)
+    : t ? (pct ? (t.per_lap * 100).toFixed(2) : t.per_lap.toFixed(2)) : pct ? '%/lap' : 'L/lap'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
       <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <span style={line}>target</span>
+        <button onClick={() => { setMode('laps'); setDraft('') }} style={smallButton(mode === 'laps')} title="Make it last to the end of a lap">laps</button>
+        <button onClick={() => { setMode('per lap'); setDraft('') }} style={smallButton(mode === 'per lap')} title="A consumption per lap">{pct ? '%/lap' : 'L/lap'}</button>
         <input
           value={draft}
-          placeholder={t ? (pct ? (t.per_lap * 100).toFixed(2) : t.per_lap.toFixed(2)) : pct ? '%/lap' : 'L/lap'}
+          placeholder={placeholder}
           inputMode="decimal"
           onChange={(ev) => setDraft(ev.target.value)}
           onKeyDown={(ev) => { if (ev.key === 'Enter') set() }}
-          style={{ ...input, width: 70 }}
-          title={pct ? 'Virtual energy per lap you ask the driver for, in % (e.g. 3.2)' : 'Fuel per lap you ask the driver for, in litres'}
+          style={{ ...input, width: 82 }}
+          title={mode === 'laps'
+            ? 'The lap at whose end the car boxes: 170, or +12 for twelve laps from now'
+            : pct ? 'Virtual energy per lap you ask the driver for, in % (e.g. 3.2)' : 'Fuel per lap you ask the driver for, in litres'}
         />
-        <span style={line}>{pct ? '%/lap' : 'L/lap'}</span>
+        <span style={line}>{mode === 'laps' ? '' : unitText}</span>
         <button onClick={set} disabled={draft.trim() === ''} style={{ ...smallButton(draft.trim() !== ''), opacity: draft.trim() === '' ? 0.5 : 1 }}>Set</button>
-        {t ? <button onClick={() => send(null)} style={smallButton(false)}>Clear</button> : null}
+        {t ? <button onClick={() => send(null, null)} style={smallButton(false)}>Clear</button> : null}
       </span>
       {t ? (
         <>
+          {t.box_lap !== null ? (
+            <span style={line}>
+              box at the end of lap <b style={{ color: colors.text }}>{t.box_lap}</b>
+              {t.laps_to_box !== null ? ` (${t.laps_to_box.toFixed(1)} laps)` : ''}: ≤ <b style={{ color: colors.text }}>{fmtEnergy(t.per_lap, u, 2)}/lap</b>
+            </span>
+          ) : null}
           <span style={line}>
             now{' '}
             <b style={{ color: Math.abs(over) < 0.01 ? colors.success : over > 0 ? colors.danger : colors.success }}>
@@ -213,8 +244,8 @@ function Energy({ s }: { s: StrategyUpdate }) {
   if (!s.fuel && !s.ve) return null
   return (
     <div style={{ display: 'grid', gridTemplateColumns: s.fuel && s.ve ? '1fr 1fr' : '1fr', gap: 12 }}>
-      {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} kind="fuel" cfg={s.config} /> : null}
-      {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} kind="ve" cfg={s.config} /> : null}
+      {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} kind="fuel" cfg={s.config} lapsCompleted={s.laps_completed} /> : null}
+      {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} kind="ve" cfg={s.config} lapsCompleted={s.laps_completed} /> : null}
     </div>
   )
 }
@@ -369,6 +400,10 @@ function PitAndWeather({ s }: { s: StrategyUpdate }) {
 // ---------------------------------------------------------------------------
 
 function Settings({ cfg }: { cfg: StrategyConfig }) {
+  const [initial] = useState(() => ({
+    veTarget: cfg.ve_target_per_lap !== null ? String(+(cfg.ve_target_per_lap * 100).toFixed(3)) : '',
+    fuelTarget: cfg.fuel_target_per_lap !== null ? String(cfg.fuel_target_per_lap) : '',
+  }))
   const [draft, setDraft] = useState({
     reserve: String(cfg.reserve_laps),
     stint: cfg.max_stint_minutes !== null ? String(cfg.max_stint_minutes) : '',
@@ -388,6 +423,9 @@ function Settings({ cfg }: { cfg: StrategyConfig }) {
       pit_lane_loss_s: num(draft.loss),
       ve_target_per_lap: num(draft.veTarget) !== null ? (num(draft.veTarget) as number) / 100 : null,
       fuel_target_per_lap: num(draft.fuelTarget),
+      // A target set in laps stays, unless a per-lap one was typed here.
+      ve_target_box_lap: draft.veTarget !== initial.veTarget && num(draft.veTarget) !== null ? null : cfg.ve_target_box_lap,
+      fuel_target_box_lap: draft.fuelTarget !== initial.fuelTarget && num(draft.fuelTarget) !== null ? null : cfg.fuel_target_box_lap,
     }
     sendBridgeCommand({ command: 'strategy_config', config })
   }

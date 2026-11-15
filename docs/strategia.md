@@ -33,7 +33,9 @@ altro giro verde").
   due giri verdi, vale lo stint precedente. Accanto c'è il consumo dell'ultimo
   giro da solo.
 - **Rispetto all'HUD del gioco**: la stima dei giri del gioco non è leggibile
-  da Pitwall e pesa di più gli ultimissimi giri. Dopo un finale di stint in
+  da Pitwall (né dalla memoria condivisa né dalle API REST, che danno solo il
+  livello a fine giro) e pesa di più gli ultimissimi giri. Per confronto,
+  accanto ai giri rimasti il widget mostra quelli al consumo dell'ultimo giro. Dopo un finale di stint in
   risparmio dà qualche giro in più del nostro; il primo giro del nuovo stint
   di solito torna a consumare come la media.
 - **Carburante e usura** vengono letti solo dal PC che sta guidando: dagli
@@ -89,7 +91,12 @@ altro giro verde").
 - **Una sosta in meno**: il consumo massimo per giro con cui basta una sosta in
   meno, il risparmio in percentuale e, se misurato, circa quanti secondi di LiCo
   in più servono. La riga compare solo se il risparmio è al massimo del 25 %.
-- **Target**: nel campo *target* sotto Virtual energy (o Fuel) scrivi il
+- **Target in giri**: sotto Virtual energy (o Fuel), con *laps* selezionato,
+  scrivi il giro alla fine del quale l'auto rientra, per esempio `170`, oppure
+  `+12` per dodici giri da adesso, e premi *Set*. Il widget ricava il consumo
+  massimo per arrivarci tenendo la riserva (energia rimasta ÷ (giri al box +
+  giri di riserva)) e lo usa come target, come sotto.
+- **Target per giro**: con *%/lap* (o *L/lap*) selezionato scrivi il
   consumo che chiedi al pilota, per esempio `3.2` per 3,2 %/giro, e premi
   *Set*. Il widget mostra di quanto è sopra o sotto, i secondi di LiCo
   necessari (o il margine) e, a quel consumo, giri rimasti, durata di un pieno
@@ -106,7 +113,7 @@ altro giro verde").
 | Tyre limit (% tread) | 30 | Sotto questa percentuale di battistrada una gomma è finita |
 | Pit lane loss (s) | misurata | Valore a mano al posto di quello misurato |
 | New tyres at the stop | no | La tabella "Box in" include il cambio di 4 gomme |
-| VE target (%/lap) | nessuno | Consumo di VE chiesto al pilota (vedi *Lift and coast*) |
+| VE target (%/lap) | nessuno | Consumo di VE chiesto al pilota (vedi *Lift and coast*); il target in giri si imposta dal widget e ha la precedenza |
 | Fuel target (L/lap) | nessuno | Consumo di carburante chiesto al pilota |
 
 Le impostazioni valgono per il bridge o l'hub a cui sei collegato e vengono

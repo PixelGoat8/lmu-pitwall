@@ -371,6 +371,8 @@ impl World {
                         "extra_lift_and_coast_s_per_lap": sv.extra_coast_s.map(r1),
                     })),
                     "engineer_target": e.target.as_ref().map(|t| json!({
+                        "box_at_end_of_lap": t.box_lap,
+                        "laps_to_that_stop": t.laps_to_box.map(r1),
                         "use_per_lap": r2(t.per_lap * k),
                         "now_over_target_percent": r1(t.off_target * 100.0),
                         "laps_left_at_target": r1(t.laps_left),

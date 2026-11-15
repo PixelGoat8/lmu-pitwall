@@ -53,6 +53,9 @@ export interface SaveStop {
 }
 
 export interface EnergyTarget {
+  /** Set as "box at the end of this lap"; null when set per lap. */
+  box_lap: number | null
+  laps_to_box: number | null
   per_lap: number
   off_target: number           // fraction: +0.05 = 5 % over the target
   laps_left: number
@@ -121,6 +124,8 @@ export interface StrategyConfig {
   pit_lane_loss_s: number | null
   ve_target_per_lap: number | null    // fraction per lap
   fuel_target_per_lap: number | null  // litres per lap
+  ve_target_box_lap: number | null    // target in laps: box at the end of this lap
+  fuel_target_box_lap: number | null
 }
 
 export interface StrategyUpdate {
