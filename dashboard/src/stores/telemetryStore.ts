@@ -76,6 +76,7 @@ interface TelemetrySection {
   ve_history: number[] | null
   ve_available: boolean | null
   heading_deg: number
+  spectated: boolean
 }
 
 interface ScoringSection {
@@ -87,6 +88,9 @@ interface ScoringSection {
   in_realtime: boolean
   player_name: string
   player_vehicle_model: string
+  own_car: boolean
+  followed_car: string | null
+  followed: boolean
 }
 
 interface SessionSection {
@@ -204,6 +208,7 @@ const defaultTelemetry: TelemetrySection = {
   ve_history: null,
   ve_available: null,
   heading_deg: 0,
+  spectated: false,
 }
 
 const defaultScoring: ScoringSection = {
@@ -215,6 +220,9 @@ const defaultScoring: ScoringSection = {
   in_realtime: false,
   player_name: '',
   player_vehicle_model: '',
+  own_car: true,
+  followed_car: null,
+  followed: false,
 }
 
 const defaultSession: SessionSection = {
@@ -364,6 +372,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
             ve_history: msg.ve_history ?? null,
             ve_available: msg.ve_available ?? null,
             heading_deg: msg.heading_deg,
+            spectated: msg.spectated ?? false,
           },
         })
         break
@@ -407,6 +416,9 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
               in_realtime: msg.in_realtime ?? false,
               player_name: msg.player_name ?? '',
               player_vehicle_model: msg.player_vehicle_model ?? '',
+              own_car: msg.own_car ?? true,
+              followed_car: msg.followed_car ?? null,
+              followed: msg.followed ?? false,
             },
             lapHistory,
             _lapTracking: tracking,

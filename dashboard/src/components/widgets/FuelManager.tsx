@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import SpectatedNotice from '../SpectatedNotice'
 import { useTelemetryStore } from '../../stores/telemetryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
@@ -52,6 +53,12 @@ function fmtTime(sec: number | null): string {
 }
 
 export default function FuelManager() {
+  const spectated = useTelemetryStore((s) => s.telemetry.spectated)
+  if (spectated) return <SpectatedNotice what="Fuel" />
+  return <FuelManagerInner />
+}
+
+function FuelManagerInner() {
   const fuel             = useTelemetryStore((s) => s.telemetry.fuel)
   const fuelCapacity     = useTelemetryStore((s) => s.telemetry.fuel_capacity)
   const fuelPct          = useTelemetryStore((s) => s.telemetry.fuel_pct)

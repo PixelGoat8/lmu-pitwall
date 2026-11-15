@@ -763,8 +763,10 @@ pub async fn run(
                         ServerMessage::AiFeed(_) => {}
                         other => {
                             let v = match other {
-                                ServerMessage::Raw(v) => Some(v.clone()),
-                                ServerMessage::ScoringUpdate { .. } | ServerMessage::TelemetryUpdate { .. } | ServerMessage::ConnectionStatus { .. } => rmpv::ext::to_value(other).ok(),
+                                ServerMessage::Raw(_)
+                                | ServerMessage::ScoringUpdate { .. }
+                                | ServerMessage::TelemetryUpdate { .. }
+                                | ServerMessage::ConnectionStatus { .. } => crate::recording::to_raw(other),
                                 _ => None,
                             };
                             if let Some(v) = v {

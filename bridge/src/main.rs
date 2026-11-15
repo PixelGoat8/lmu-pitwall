@@ -8,6 +8,7 @@ mod assets;
 mod config;
 mod electronics;
 mod fuel;
+mod follow;
 mod fuel_calculator;
 mod garage_api;
 mod http_server;
@@ -118,6 +119,7 @@ fn build_telemetry_update(
     ve_history: Option<Vec<f64>>,
     ve_available: Option<bool>,
     lockups: &[tyres::LockupStats; 4],
+    spectated: bool,
 ) -> Option<ServerMessage> {
     let veh = tel
         .player()
@@ -202,6 +204,7 @@ fn build_telemetry_update(
         ve_history,
         ve_available,
         heading_deg,
+        spectated,
     })
 }
 
@@ -248,7 +251,10 @@ fn position_of(scoring: rF2Vec3, telemetry: Option<rF2Vec3>) -> (f64, f64, f64) 
 }
 
 /// Build a ScoringUpdate and return the player slot ID found in scoring data.
-fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (ServerMessage, i32) {
+/// Build a ScoringUpdate. Returns it with "our car" (the player's, or in the
+/// engineer seat the car followed by hand; -1 for none) and whether that car
+/// is a followed one rather than this PC's own.
+fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (ServerMessage, i32, bool) {
     let info = &sc.mScoringInfo;
     let mut player_id = -1i32;
 
@@ -314,6 +320,18 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
         })
         .collect();
 
+    // No car of our own (engineer seat, spectator): use the one picked by hand.
+    let own_car = player_id >= 0;
+    let mut followed = false;
+    if !own_car {
+        if let Some(name) = follow::get() {
+            if let Some(v) = sc.mVehicles.iter().find(|v| bytes_to_str(&v.mVehicleName) == name) {
+                player_id = v.mID;
+                followed = true;
+            }
+        }
+    }
+
     let msg = ServerMessage::ScoringUpdate {
         session_type:      session_type_str(info.mSession).to_string(),
         session_time:      info.mCurrentET,
@@ -323,11 +341,14 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
         in_realtime:       info.mInRealtime != 0,
         player_name:       bytes_to_str(&info.mPlayerName).to_string(),
         player_vehicle_model: tel
-            .and_then(|t| t.player())
+            .and_then(|t| t.player().or_else(|| t.mVehicles.iter().find(|v| v.mID == player_id)))
             .map(|v| bytes_to_str(&v.mVehicleModel).to_string())
             .unwrap_or_default(),
+        own_car,
+        followed_car: follow::get(),
+        followed,
     };
-    (msg, player_id)
+    (msg, player_id, followed)
 }
 
 fn build_electronics_update(snap: &ElectronicsSnapshot) -> ServerMessage {
@@ -967,6 +988,8 @@ async fn task_broadcaster(
     let mut last_electronics = epoch - electronics_interval;
 
     let mut player_id: i32 = -1;
+    // Our car is followed from the engineer seat: its consumables are placeholders.
+    let mut spectated = false;
 
     // Fuel strategy tracker — lives here for the lifetime of the broadcaster task.
     let mut fuel_tracker = FuelTracker::new();
@@ -1063,12 +1086,12 @@ async fn task_broadcaster(
             }
 
             let tel_msg = if send_tel {
-                s.telemetry.as_ref().and_then(|t| build_telemetry_update(t, player_id, &fuel_snapshot, s.ve_history.clone(), s.ve_available, &s.lockups))
+                s.telemetry.as_ref().and_then(|t| build_telemetry_update(t, player_id, &fuel_snapshot, s.ve_history.clone(), s.ve_available, &s.lockups, spectated))
             } else {
                 None
             };
 
-            let sc_result: Option<(ServerMessage, i32)> = if send_scoring {
+            let sc_result: Option<(ServerMessage, i32, bool)> = if send_scoring {
                 s.scoring.as_ref().map(|sc| build_scoring_update(sc, s.telemetry.as_ref()))
             } else {
                 None
@@ -1185,8 +1208,9 @@ async fn task_broadcaster(
             });
         }
 
-        if let Some((sc_msg, pid)) = sc_result {
+        if let Some((sc_msg, pid, followed)) = sc_result {
             player_id = pid;
+            spectated = followed;
             ws.broadcast(sc_msg);
             last_scoring = now;
         }

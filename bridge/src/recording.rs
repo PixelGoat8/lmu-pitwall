@@ -167,6 +167,22 @@ fn parse_line(line: &str) -> Result<Frame> {
     Ok(Frame { t_ms, msg })
 }
 
+/// A typed message as the raw value a client would decode: a map keyed by
+/// field name, exactly what goes on the wire.
+///
+/// The stream engines (strategy, race log, AI) read messages in this form,
+/// whether they come from this bridge, a replay or a relayed bridge. Do not
+/// use `rmpv::ext::to_value` for this: it encodes structs as positional
+/// arrays, so every field lookup would fail and the engines would see
+/// nothing from a live game.
+pub fn to_raw(msg: &ServerMessage) -> Option<rmpv::Value> {
+    if let ServerMessage::Raw(v) = msg {
+        return Some(v.clone());
+    }
+    let bytes = rmp_serde::to_vec_named(msg).ok()?;
+    rmpv::decode::read_value(&mut &bytes[..]).ok()
+}
+
 /// The `type` tag of a message held as a raw value.
 pub fn message_type(msg: &rmpv::Value) -> Option<&str> {
     field(msg, "type")?.as_str()
@@ -296,5 +312,24 @@ mod tests {
         assert!(format!("{err:#}").contains("line 2"), "{err:#}");
         assert!(rec("{\"t\":0,\"j\":{\"no_type\":1}}\n").is_err());
         assert!(rec("not json\n").is_err());
+    }
+}
+
+#[cfg(test)]
+mod live_conversion_tests {
+    use crate::protocol::messages::ServerMessage;
+
+    /// The stream engines read the bridge's own typed messages as raw
+    /// values, the way replays deliver them. This failed live once: struct
+    /// fields came out as positional arrays and the engines saw nothing.
+    #[test]
+    fn a_typed_message_converts_to_a_tagged_value() {
+        let msg = ServerMessage::Heartbeat { server_time_ms: 5 };
+        let v = super::to_raw(&msg).expect("convertible");
+        assert_eq!(super::message_type(&v), Some("Heartbeat"));
+        assert_eq!(super::field(&v, "server_time_ms").and_then(|x| x.as_u64()), Some(5));
+        // A raw message passes through unchanged.
+        let raw = ServerMessage::Raw(v.clone());
+        assert_eq!(super::to_raw(&raw), Some(v));
     }
 }

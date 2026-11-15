@@ -184,6 +184,7 @@ export interface TelemetryUpdate {
   ve_history: number[] | null     // per-lap VE values from REST API (0–1 each); null = unavailable
   ve_available: boolean | null    // true if car supports VE; null = not yet determined
   heading_deg: number             // world heading in degrees, 0=N, clockwise (from mOri[2])
+  spectated?: boolean             // car followed from the engineer seat: fuel/tyres are placeholders
 }
 
 export interface ScoringUpdate {
@@ -196,6 +197,9 @@ export interface ScoringUpdate {
   in_realtime?: boolean           // the local player is in the car
   player_name?: string            // who is playing on the bridge's PC
   player_vehicle_model?: string   // model of the player's car, e.g. "Peugeot 9X8"
+  own_car?: boolean               // false in the engineer seat / as a spectator
+  followed_car?: string | null    // car name chosen to follow when there is no own car
+  followed?: boolean              // player_vehicle_id is that followed car
 }
 
 export interface SessionInfo {

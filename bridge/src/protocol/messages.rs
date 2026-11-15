@@ -230,6 +230,10 @@ pub enum ServerMessage {
         ve_available: Option<bool>,
         /// World heading in degrees, 0 = North, clockwise positive (derived from mOri[2]).
         heading_deg: f64,
+        /// The car is followed from the engineer seat, not driven on this PC:
+        /// its fuel, tyre and brake values are LMU's placeholders, not data.
+        #[serde(default)]
+        spectated: bool,
     },
 
     /// Medium frequency: ~5Hz
@@ -250,6 +254,16 @@ pub enum ServerMessage {
         /// which is not what results and the fuel calculator are keyed by.
         #[serde(default)]
         player_vehicle_model: String,
+        /// This PC has a car of its own in the session (false in the
+        /// engineer seat and as a spectator).
+        #[serde(default = "default_true")]
+        own_car: bool,
+        /// The car name chosen to follow when there is no own car (see `crate::follow`).
+        #[serde(default)]
+        followed_car: Option<String>,
+        /// `player_vehicle_id` is that followed car.
+        #[serde(default)]
+        followed: bool,
     },
 
     /// Low frequency: ~1Hz
@@ -783,6 +797,13 @@ pub enum ClientCommand {
     // -----------------------------------------------------------------------
     // Strategy
     // -----------------------------------------------------------------------
+    /// Follow this car (its name as the game shows it) when the PC has no car
+    /// of its own, e.g. in LMU's engineer seat. `null` stops following.
+    FollowCar {
+        #[serde(default)]
+        car_name: Option<String>,
+    },
+
     /// Replace the strategy settings (reserve, stint limit, tyre limit, …).
     StrategyConfig { config: crate::strategy::StrategyConfig },
 

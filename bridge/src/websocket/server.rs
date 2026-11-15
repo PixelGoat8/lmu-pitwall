@@ -399,6 +399,20 @@ async fn handle_client(
 
                                 // Strategy settings: the engine answers with a
                                 // fresh StrategyUpdate to everyone.
+                                if let ClientCommand::FollowCar { car_name } = cmd {
+                                    if hub_tx.is_some() {
+                                        let msg = ServerMessage::HubError {
+                                            message: "Choose the car on the Pitwall connected to the game (on the engineer's PC: http://localhost:9000).".into(),
+                                        };
+                                        if let Ok(ws_msg) = serialize(&msg, fmt) {
+                                            let _ = sink.send(ws_msg).await;
+                                        }
+                                    } else {
+                                        info!("Following car: {:?}", car_name);
+                                        crate::follow::set(car_name);
+                                    }
+                                    continue;
+                                }
                                 if let ClientCommand::StrategyConfig { config } = cmd {
                                     let _ = strategy_tx.send(config);
                                     continue;

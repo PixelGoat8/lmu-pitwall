@@ -3,6 +3,7 @@ import { useTelemetryStore } from '../../stores/telemetryStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
 import type { TireData } from '../../types/telemetry'
+import SpectatedNotice from '../SpectatedNotice'
 import { tyreStatus, tyreTempColor, unevenWear } from '../../utils/tyreStatus'
 import type { TyreSeverity } from '../../utils/tyreStatus'
 
@@ -230,6 +231,12 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
 // ---------------------------------------------------------------------------
 
 export default function TireMonitor() {
+  const spectated = useTelemetryStore((s) => s.telemetry.spectated)
+  if (spectated) return <SpectatedNotice what="Tyres" />
+  return <TireMonitorInner />
+}
+
+function TireMonitorInner() {
   const tires        = useTelemetryStore((s) => s.telemetry.tires)
   const gameConnected  = useTelemetryStore((s) => s.connection.game_connected)
   const telemetryValid = useTelemetryStore((s) => s.connection.telemetry_valid)

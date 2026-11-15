@@ -407,9 +407,10 @@ pub async fn run(mut rx: broadcast::Receiver<Arc<ServerMessage>>, tx: broadcast:
                             }
                             v.clone()
                         }
-                        other => match rmpv::ext::to_value(other) {
-                            Ok(v) => v,
-                            Err(_) => continue,
+                        ServerMessage::AiFeed(_) => continue,
+                        other => match crate::recording::to_raw(other) {
+                            Some(v) => v,
+                            None => continue,
                         },
                     };
                     log.on_message(&value);

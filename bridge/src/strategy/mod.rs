@@ -720,11 +720,10 @@ pub async fn run(
             r = rx.recv() => match r {
                 Ok(msg) => {
                     let value = match &*msg {
-                        ServerMessage::StrategyUpdate(_) => continue,
-                        ServerMessage::Raw(v) => v.clone(),
-                        other => match rmpv::ext::to_value(other) {
-                            Ok(v) => v,
-                            Err(_) => continue,
+                        ServerMessage::StrategyUpdate(_) | ServerMessage::RaceTiming(_) | ServerMessage::AiFeed(_) => continue,
+                        other => match crate::recording::to_raw(other) {
+                            Some(v) => v,
+                            None => continue,
                         },
                     };
                     let (lap_done, new_loss) = engine.on_message(&value);

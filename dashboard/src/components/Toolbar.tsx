@@ -5,6 +5,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { WIDGET_REGISTRY } from './widgetRegistry'
 import { colors, fonts } from '../styles/theme'
 import { bridgeApiUrl } from '../utils/bridge'
+import { sendBridgeCommand } from '../hooks/useWebSocket'
 import { isFullscreen, keepAwakeActive, setKeepAwake, toggleFullscreen as toggleFs } from '../utils/device'
 
 interface NetworkInfo {
@@ -189,6 +190,46 @@ function UpdateBadge() {
   )
 }
 
+/**
+ * In the engineer seat (or as a spectator) the game gives this PC no car:
+ * pick the team car to follow. Its timing, gaps, VE, strategy and AI work as
+ * for our own car; fuel and tyres are not available from here.
+ */
+function FollowPicker() {
+  const ownCar = useTelemetryStore((s) => s.scoring.own_car)
+  const followed = useTelemetryStore((s) => s.scoring.followed_car)
+  const vehicles = useTelemetryStore((s) => s.scoring.vehicles)
+  const sessionActive = useTelemetryStore((s) => s.connection.session_active)
+  const isHub = useTelemetryStore((s) => s.hub.status !== null)
+  if (ownCar || !sessionActive || isHub || vehicles.length === 0) return null
+  const cars = [...vehicles].sort((a, b) => a.position - b.position)
+  const known = !!followed && cars.some((v) => v.car_name === followed)
+  return (
+    <select
+      value={known ? followed ?? '' : ''}
+      onChange={(e) => sendBridgeCommand({ command: 'follow_car', car_name: e.target.value || null })}
+      title="No car of your own in this session (engineer seat): choose the team car to follow"
+      style={{
+        background: known ? `${colors.primary}22` : colors.bgWidget,
+        border: `1px solid ${known ? colors.primary : colors.accent}`,
+        color: known ? colors.primary : colors.accent,
+        fontFamily: fonts.body,
+        fontSize: 16,
+        padding: '4px 8px',
+        borderRadius: 3,
+        maxWidth: 280,
+      }}
+    >
+      <option value="">👁 Follow a car…</option>
+      {cars.map((v) => (
+        <option key={v.id} value={v.car_name}>
+          P{v.position} {v.car_name} — {v.driver_name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 /** On a hub: who is on screen right now. Nothing on an ordinary bridge. */
 function HubBadge() {
   const status = useTelemetryStore((s) => s.hub.status)
@@ -313,6 +354,7 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
 
       <ConnectionBadge />
       <HubBadge />
+      <FollowPicker />
 
       <div style={{ width: 1, height: 27, background: colors.border, margin: '0 4px' }} />
 
