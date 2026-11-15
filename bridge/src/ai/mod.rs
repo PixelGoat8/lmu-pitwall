@@ -466,12 +466,19 @@ fn rivals(sc: &Value) -> Option<serde_json::Value> {
     same.sort_by(|a, b| n(a, "position").total_cmp(&n(b, "position")));
     let idx = same.iter().position(|r| field(r, "id").and_then(|v| v.as_i64()) == Some(pid))?;
     let race = field(sc, "session_type").and_then(|v| v.as_str()).unwrap_or("").to_lowercase().contains("race");
+    let links: Vec<crate::gaps::Link> = rows
+        .iter()
+        .map(|r| crate::gaps::Link {
+            place: n(r, "position") as i64,
+            time_behind_next: n(r, "time_behind_next"),
+            laps_behind_next: n(r, "laps_behind_next").max(0.0) as i64,
+        })
+        .collect();
     let car = |r: &Value| {
-        let gap = if race {
-            let laps = n(r, "laps_behind_leader") - n(me, "laps_behind_leader");
-            if laps.abs() >= 1.0 { json!(format!("{} laps", laps.abs())) } else { json!(r1((n(r, "time_behind_leader") - n(me, "time_behind_leader")).abs())) }
-        } else {
-            json!(null)
+        let gap = match crate::gaps::between(&links, n(me, "position") as i64, n(r, "position") as i64) {
+            Some(crate::gaps::Gap::Laps(l)) if race => json!(format!("{l} laps")),
+            Some(crate::gaps::Gap::Time(t)) if race => json!(r1(t)),
+            _ => json!(null),
         };
         json!({
             "driver": field(r, "driver_name").and_then(|v| v.as_str()).unwrap_or(""),

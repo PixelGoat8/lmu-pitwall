@@ -4,6 +4,7 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
 import { getClassColor } from '../../utils/classColors'
 import { hexAlpha, fmtSec, fmtLap, fmtTimeDiff, sectorColor, bestS2, lastS2 } from '../../utils/lapFormat'
+import { raceGap } from '../../utils/gaps'
 import type { VehicleScoring } from '../../types/telemetry'
 
 // Minimal class-coloured position badge (mirrors Standings' ClassBadge)
@@ -86,9 +87,12 @@ export default function BattleWidget() {
     const fmtBattleGap = (other: VehicleScoring): string => {
       if (other.id === player.id) return '—'
       if (isRace) {
-        const lapDiff = other.laps_behind_leader - player.laps_behind_leader
-        if (lapDiff !== 0) return `${lapDiff > 0 ? '+' : '-'}${Math.abs(lapDiff)}L`
-        return fmtTimeDiff(other.time_behind_leader - player.time_behind_leader)
+        // Summed along the order: the gap to the leader is 0 for lapped cars.
+        const gap = raceGap(vehicles, player, other)
+        if (!gap) return '---'
+        const sign = other.position > player.position ? 1 : -1
+        if (gap.kind === 'laps') return `${sign > 0 ? '+' : '-'}${gap.laps}L`
+        return fmtTimeDiff(sign * gap.seconds)
       }
       // Practice / Qualifying: compare best lap times
       if (other.best_lap_time <= 0 || player.best_lap_time <= 0) return '---'

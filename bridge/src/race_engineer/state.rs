@@ -596,8 +596,16 @@ impl StateAggregator {
         let num_penalties = player_sc.map(|v| v.mNumPenalties.max(0) as u32).unwrap_or(0);
 
         // --- Class rivals pace ---
-        let player_time_behind_leader = player_sc.map(|v| v.mTimeBehindLeader).unwrap_or(0.0);
-        let player_laps_behind_leader = player_sc.map(|v| v.mLapsBehindLeader).unwrap_or(0);
+        // Gaps are summed along the order (see gaps.rs): the gap to the leader
+        // reads 0 for every car the leader has lapped.
+        let links: Vec<crate::gaps::Link> = sc
+            .map(|s| s.mVehicles.iter().map(|v| crate::gaps::Link {
+                place: v.mPlace as i64,
+                time_behind_next: v.mTimeBehindNext,
+                laps_behind_next: v.mLapsBehindNext.max(0) as i64,
+            }).collect())
+            .unwrap_or_default();
+        let player_place = player_sc.map(|v| v.mPlace as i64).unwrap_or(0);
         let (class_rivals_avg_last_lap, class_rivals_min_best_lap,
              class_car_ahead_last_lap, class_car_behind_last_lap) = sc.map(|s| {
             let player_class_name = player_sc
@@ -615,13 +623,15 @@ impl StateAggregator {
                 .filter(|v| v.mIsPlayer == 0 && v.mVehicleClass[..] == *player_class_name)
             {
                 let in_pits = v.mInPits != 0;
-                let same_lap = v.mLapsBehindLeader == player_laps_behind_leader;
-                let gap_to_player = (v.mTimeBehindLeader - player_time_behind_leader).abs();
+                let close = matches!(
+                    crate::gaps::between(&links, player_place, v.mPlace as i64),
+                    Some(crate::gaps::Gap::Time(t)) if t <= 10.0
+                );
                 let v_place = v.mPlace as u32;
                 let has_valid_lap = v.mLastLapTime > 0.0 && v.mBestLapTime > 0.0
                     && v.mLastLapTime <= v.mBestLapTime * 1.10;
                 let proximity_ok = !in_pits && total_laps_driven >= 1
-                    && v.mTotalLaps >= 1 && same_lap && gap_to_player <= 10.0;
+                    && v.mTotalLaps >= 1 && close;
 
                 if proximity_ok && has_valid_lap {
                     last_lap_sum += v.mLastLapTime;

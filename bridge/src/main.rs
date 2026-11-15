@@ -10,6 +10,7 @@ mod electronics;
 mod fuel;
 mod follow;
 mod fuel_calculator;
+mod gaps;
 mod garage_api;
 mod http_server;
 mod history;

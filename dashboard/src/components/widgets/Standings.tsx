@@ -5,6 +5,7 @@ import { colors, fonts } from '../../styles/theme'
 import { getClassColor } from '../../utils/classColors'
 import { DAMAGE_ZONES, dentPct } from '../../utils/damage'
 import { hexAlpha, fmtSec, fmtLap, fmtTimeDiff, sectorColor, bestS2, SECTOR_SB } from '../../utils/lapFormat'
+import { raceGap } from '../../utils/gaps'
 import type { VehicleScoring } from '../../types/telemetry'
 
 function ClassBadge({ position, vehicleClass }: { position: string; vehicleClass: string }) {
@@ -25,18 +26,16 @@ function ClassBadge({ position, vehicleClass }: { position: string; vehicleClass
 }
 
 // Gap from `v` to the reference car — the overall leader or its own class leader.
-// Both mTimeBehindLeader and mLapsBehindLeader are measured against the overall
-// leader, so the gap to any other car is their difference. With the overall
-// leader as reference both of its terms are zero and this reduces to the raw
-// values. (Same derivation the Proximity widget uses for player-relative gaps.)
-function fmtGap(v: VehicleScoring, ref: VehicleScoring, isRace: boolean): string {
+// Summed along the order (raceGap): mTimeBehindLeader reads 0 for every car
+// the leader has lapped, so it cannot be used.
+function fmtGap(vehicles: VehicleScoring[], v: VehicleScoring, ref: VehicleScoring, isRace: boolean): string {
   if (v.id === ref.id) return '—'
   if (isRace) {
-    const lapsDown = v.laps_behind_leader - ref.laps_behind_leader
-    if (lapsDown > 0) return `+${lapsDown} lap${lapsDown > 1 ? 's' : ''}`
-    const gap = v.time_behind_leader - ref.time_behind_leader
-    if (gap > 0) return fmtTimeDiff(gap)
-    return '---'
+    if (v.position < ref.position) return '---'
+    const gap = raceGap(vehicles, ref, v)
+    if (!gap) return '---'
+    if (gap.kind === 'laps') return `+${gap.laps} lap${gap.laps > 1 ? 's' : ''}`
+    return gap.seconds > 0 ? fmtTimeDiff(gap.seconds) : '---'
   }
   // Practice / Qualifying: gap by best lap time
   if (v.best_lap_time <= 0 || ref.best_lap_time <= 0) return '---'
@@ -402,7 +401,7 @@ export default function Standings() {
                     : leader
                   return (
                     <span style={{ fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, width: W_GAP, textAlign: 'right', flexShrink: 0 }}>
-                      {gapRef ? fmtGap(v, gapRef, isRace) : '---'}
+                      {gapRef ? fmtGap(vehicles, v, gapRef, isRace) : '---'}
                     </span>
                   )
                 })()}

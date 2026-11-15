@@ -63,7 +63,7 @@ export default function GapWidget() {
         for (const side of ['ahead', 'behind'] as const) {
           const car = n[side]
           if (!car) continue
-          const gap = gapBetween(n.player, car, true)
+          const gap = gapBetween(sc.vehicles, n.player, car, true)
           // A gap in laps has no meaningful lap-over-lap change; neither has
           // a gap measured while either car is in the pits.
           if (!gap || gap.kind !== 'time' || car.in_pits || n.player.in_pits) continue
@@ -87,8 +87,8 @@ export default function GapWidget() {
   }
 
   const rows: RowData[] = [
-    { side: 'ahead', car: info.ahead, classPos: info.classPosition - 1, gap: info.ahead ? gapBetween(info.player, info.ahead, isRace) : null, trend: trends.ahead },
-    { side: 'behind', car: info.behind, classPos: info.classPosition + 1, gap: info.behind ? gapBetween(info.player, info.behind, isRace) : null, trend: trends.behind },
+    { side: 'ahead', car: info.ahead, classPos: info.classPosition - 1, gap: info.ahead ? gapBetween(vehicles, info.player, info.ahead, isRace) : null, trend: trends.ahead },
+    { side: 'behind', car: info.behind, classPos: info.classPosition + 1, gap: info.behind ? gapBetween(vehicles, info.player, info.behind, isRace) : null, trend: trends.behind },
   ]
   const classColor = getClassColor(info.player.vehicle_class)
 

@@ -36,19 +36,46 @@ export function classNeighbours(vehicles: VehicleScoring[], playerId: number): C
 }
 
 /**
+ * Race gap between two cars, in either order.
+ *
+ * Summed along the order from each car's gap to the car one place ahead
+ * (mTimeBehindNext / mLapsBehindNext). The gap to the leader cannot be used:
+ * LMU sets mTimeBehindLeader to 0 for every car the leader has lapped, so two
+ * lapped cars on the same lap would read 0 s apart (seen live, 2026-11-15).
+ * Same rule as bridge/src/gaps.rs.
+ */
+export function raceGap(vehicles: VehicleScoring[], a: VehicleScoring, b: VehicleScoring): Gap {
+  const [front, back] = a.position <= b.position ? [a, b] : [b, a]
+  const byPlace = new Map(vehicles.map((v) => [v.position, v]))
+  let seconds = 0
+  let laps = 0
+  for (let p = front.position + 1; p <= back.position; p++) {
+    const v = byPlace.get(p)
+    if (!v) return null
+    // An older bridge or recording without these fields: the old way, right
+    // at least while both cars are on the lead lap.
+    if (v.time_behind_next === undefined || v.laps_behind_next === undefined) return leaderGap(front, back)
+    if (v.laps_behind_next > 0) laps += v.laps_behind_next
+    // Slightly negative values happen at timing points.
+    else seconds += Math.max(0, v.time_behind_next)
+  }
+  return laps > 0 ? { kind: 'laps', laps } : { kind: 'time', seconds }
+}
+
+function leaderGap(front: VehicleScoring, back: VehicleScoring): Gap {
+  const laps = back.laps_behind_leader - front.laps_behind_leader
+  if (laps > 0) return { kind: 'laps', laps }
+  return { kind: 'time', seconds: Math.max(0, back.time_behind_leader - front.time_behind_leader) }
+}
+
+/**
  * How far `other` is from `player`.
  *
- * In a race this is the difference of the two cars' gaps to the leader, or a
- * whole number of laps when they are not on the same lap. In practice and
- * qualifying there is no order on track to measure, so it is the difference
- * of best laps. Same convention as the Proximity widget.
+ * In a race: `raceGap`, in time or in whole laps. In practice and qualifying
+ * there is no order on track to measure, so it is the difference of best laps.
  */
-export function gapBetween(player: VehicleScoring, other: VehicleScoring, isRace: boolean): Gap {
-  if (isRace) {
-    const lapDiff = Math.abs(other.laps_behind_leader - player.laps_behind_leader)
-    if (lapDiff !== 0) return { kind: 'laps', laps: lapDiff }
-    return { kind: 'time', seconds: Math.abs(other.time_behind_leader - player.time_behind_leader) }
-  }
+export function gapBetween(vehicles: VehicleScoring[], player: VehicleScoring, other: VehicleScoring, isRace: boolean): Gap {
+  if (isRace) return raceGap(vehicles, player, other)
   if (other.best_lap_time <= 0 || player.best_lap_time <= 0) return null
   return { kind: 'time', seconds: Math.abs(other.best_lap_time - player.best_lap_time) }
 }
