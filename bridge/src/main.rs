@@ -354,6 +354,18 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
     (msg, player_id, followed)
 }
 
+/// The car the dashboard is about: ours, or else the one followed by hand
+/// from the engineer seat (same rule as `build_scoring_update`). -1 if none.
+fn focus_id(sc: &ScoringFrame) -> i32 {
+    if let Some(v) = sc.player() {
+        return v.mID;
+    }
+    follow::get()
+        .and_then(|name| sc.mVehicles.iter().find(|v| bytes_to_str(&v.mVehicleName) == name))
+        .map(|v| v.mID)
+        .unwrap_or(-1)
+}
+
 fn build_electronics_update(snap: &ElectronicsSnapshot) -> ServerMessage {
     ServerMessage::ElectronicsUpdate {
         tc: snap.tc,
@@ -706,14 +718,14 @@ async fn task_polling(
                 }
 
                 // Build electronics snapshot directly from telemetry.
-                let player_id_from_sc = sc.as_ref().and_then(|s| {
-                    s.player().map(|v| v.mID)
-                }).unwrap_or(-1);
+                // Our car, or the one followed from the engineer seat. Without
+                // the followed car the lookups below fell back to the first car
+                // in the list: electronics (VE, TC, ABS…) of a stranger.
+                let player_id_from_sc = sc.as_ref().map(focus_id).unwrap_or(-1);
 
                 let electronics = tel.as_ref().and_then(|t| {
                     t.player()
                         .or_else(|| t.mVehicles.iter().find(|v| v.mID == player_id_from_sc))
-                        .or_else(|| t.mVehicles.first())
                         .map(ElectronicsSnapshot::from_telemetry)
                 }).unwrap_or_default();
 
