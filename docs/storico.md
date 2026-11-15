@@ -19,6 +19,10 @@ Per ogni sessione, dal primo momento in cui la nostra auto è in pista:
 
 Una sessione compare nell'elenco dopo il primo giro completato.
 
+Le prove (Practice, Test Day, Warmup) non vengono registrate: Pitwall di solito
+parte molto prima della gara e lo storico tiene solo qualifiche e gara. Anche i
+commenti AI scritti durante le prove non finiscono nella sessione dopo.
+
 ## Il pannello History
 
 - **Elenco:** pista, tipo di sessione, data, giri, piloti, giro migliore. Le

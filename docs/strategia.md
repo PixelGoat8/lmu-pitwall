@@ -45,6 +45,8 @@ altro giro verde").
   dalla sosta) − (altrettanti giri di riferimento) − (tempo da fermo). Viene
   salvata per pista in `%APPDATA%\LMUPitwall\pit_loss.json` e si usa la mediana.
   Prima della prima sosta su una pista non c'è, a meno di inserirla a mano.
+  Le soste fatte in prova (Practice, Test Day, Warmup) non vengono salvate: lì
+  si rientra per cambiare assetto o si va in garage, e il dato sarebbe falsato.
 - **Calo di passo con le gomme**: pendenza dei tempi sul giro nei giri puliti
   del treno attuale. Comprende anche l'auto che si alleggerisce consumando
   carburante, quindi il calo dovuto alle sole gomme è un po' maggiore.

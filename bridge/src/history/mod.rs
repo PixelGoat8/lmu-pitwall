@@ -84,7 +84,8 @@ impl Recorder {
     }
 
     fn close(&mut self) {
-        *self = Recorder::default();
+        // AI comment ids run on across sessions: keep the high-water mark.
+        *self = Recorder { ai_written: self.ai_written, ..Recorder::default() };
     }
 
     pub fn on_message(&mut self, msg: &ServerMessage) -> Vec<Op> {
@@ -100,10 +101,13 @@ impl Recorder {
                 return Vec::new();
             }
             ServerMessage::AiFeed(f) => {
-                if !self.open {
-                    return Vec::new();
-                }
-                let new: Vec<Op> = f.comments.iter().filter(|c| c.id > self.ai_written).map(|c| Op::Ai(c.clone())).collect();
+                // Comments seen while nothing was recorded (practice, menus)
+                // count as handled, so they never land in the next session.
+                let new: Vec<Op> = if self.open {
+                    f.comments.iter().filter(|c| c.id > self.ai_written).map(|c| Op::Ai(c.clone())).collect()
+                } else {
+                    Vec::new()
+                };
                 if let Some(max) = f.comments.iter().map(|c| c.id).max() {
                     self.ai_written = self.ai_written.max(max);
                 }
@@ -187,6 +191,10 @@ impl Recorder {
         let s = |r: &Value, k: &str| field(r, k).and_then(|x| x.as_str()).unwrap_or("").to_string();
 
         if !self.open {
+            // Practice before the race is not recorded.
+            if crate::session_kind::is_practice(&stype) {
+                return ops;
+            }
             let Some(me) = me else { return ops };
             self.open = true;
             self.own_laps = field(me, "total_laps").and_then(num).unwrap_or(0.0) as i64;
@@ -388,8 +396,17 @@ mod tests {
     }
 
     fn scoring(t: f64, cars: Vec<serde_json::Value>) -> ServerMessage {
-        raw(serde_json::json!({"type": "ScoringUpdate", "session_type": "Race", "session_time": t,
+        scoring_in("Race", t, cars)
+    }
+
+    fn scoring_in(stype: &str, t: f64, cars: Vec<serde_json::Value>) -> ServerMessage {
+        raw(serde_json::json!({"type": "ScoringUpdate", "session_type": stype, "session_time": t,
             "player_vehicle_id": 1, "player_name": "Alice PC", "vehicles": cars}))
+    }
+
+    fn ai_feed(ids: &[u64]) -> ServerMessage {
+        let comments = ids.iter().map(|&id| crate::ai::AiComment { id, text: format!("comment {id}"), ..Default::default() }).collect();
+        ServerMessage::AiFeed(Box::new(crate::ai::AiFeed { status: Default::default(), comments }))
     }
 
     fn tel(fuel: f64) -> ServerMessage {
@@ -463,6 +480,30 @@ mod tests {
         let id = store::list_sessions(&conn, 10).unwrap()[0].id;
         let d = store::session_detail(&conn, id).unwrap().unwrap();
         assert!(d.laps.iter().all(|l| l.fuel.is_none() && l.wear == [None; 4]));
+    }
+
+    #[test]
+    fn practice_is_not_recorded_and_leaves_nothing_behind() {
+        let mut rec = Recorder::new();
+        let mut conn = mem();
+        let mut sid = None;
+        let mut feed = |m: ServerMessage| {
+            let ops = rec.on_message(&m);
+            apply(&mut conn, &mut sid, ops).unwrap();
+        };
+        for (t, lap) in [(0.0, 0), (100.0, 1), (200.0, 2)] {
+            feed(scoring_in("Practice", t, vec![car(1, "GT3", 1, lap, 100.0, false, 0, "A")]));
+        }
+        feed(ai_feed(&[1, 2]));
+        // The race: recorded, without the practice comments.
+        feed(scoring_in("Race", 0.0, vec![car(1, "GT3", 1, 0, -1.0, false, 0, "A")]));
+        feed(ai_feed(&[1, 2, 3]));
+        feed(scoring_in("Race", 100.0, vec![car(1, "GT3", 1, 1, 100.0, false, 0, "A")]));
+        let list = store::list_sessions(&conn, 10).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].session_type, "Race");
+        let d = store::session_detail(&conn, list[0].id).unwrap().unwrap();
+        assert_eq!(d.ai.iter().map(|c| c.text.as_deref().unwrap_or("")).collect::<Vec<_>>(), vec!["comment 3"]);
     }
 
     #[test]

@@ -23,6 +23,7 @@ mod race;
 mod race_engineer;
 mod recording;
 mod rest_api;
+mod session_kind;
 mod shared_memory;
 mod strategy;
 mod tyres;

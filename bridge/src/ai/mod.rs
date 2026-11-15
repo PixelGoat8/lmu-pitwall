@@ -217,7 +217,7 @@ fn save<T: Serialize>(name: &str, v: &T) {
 // Output messages
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct AiComment {
     pub id: u64,
     /// Session time and laps completed when the snapshot was taken.
@@ -622,9 +622,73 @@ struct Ai {
     pending_event: Option<(String, Instant)>,
     /// A question asked while another request was running: sent next.
     queued_question: Option<Option<String>>,
+    /// The session the plan is about: a change starts the AI over.
+    session_type: String,
+    session_time: f64,
+    /// Bumped at each new session. A reply to a request sent in the previous
+    /// session is paid for but not shown.
+    session_gen: u64,
 }
 
 impl Ai {
+    fn new(cfg: AiConfig, key: Option<String>, day: DayUsage) -> Self {
+        Ai {
+            cfg,
+            key,
+            world: World::default(),
+            comments: VecDeque::new(),
+            next_id: 1,
+            day,
+            recent_calls: VecDeque::new(),
+            last_auto: None,
+            last_any: None,
+            busy: false,
+            last_error: None,
+            pause_until: None,
+            last_lap_commented: 0,
+            pending_event: None,
+            queued_question: None,
+            session_type: String::new(),
+            session_time: 0.0,
+            session_gen: 0,
+        }
+    }
+
+    fn in_practice(&self) -> bool {
+        crate::session_kind::is_practice(&self.session_type)
+    }
+
+    fn on_strategy(&mut self, s: StrategyReport) {
+        let new_session = !self.session_type.is_empty()
+            && (s.session_type != self.session_type || s.session_time < self.session_time - 5.0);
+        if new_session {
+            self.new_session();
+        }
+        self.session_type = s.session_type.clone();
+        self.session_time = s.session_time;
+        if self.last_lap_commented == 0 && s.laps_completed > 0 {
+            // First plan seen: count from here, do not comment on laps that
+            // went by before.
+            self.last_lap_commented = s.laps_completed;
+        }
+        if s.laps_completed < self.last_lap_commented {
+            self.last_lap_commented = s.laps_completed;
+        }
+        self.world.strategy = Some(s);
+    }
+
+    /// Nothing from the previous session (the practice before the race, say)
+    /// is shown or sent to the model again.
+    fn new_session(&mut self) {
+        info!("AI: new session, previous comments cleared");
+        self.world.reset();
+        self.comments.clear();
+        self.last_lap_commented = 0;
+        self.pending_event = None;
+        self.queued_question = None;
+        self.session_gen += 1;
+    }
+
     fn status(&self) -> AiStatus {
         AiStatus {
             enabled: self.cfg.enabled,
@@ -633,7 +697,10 @@ impl Ai {
             calls_today: self.day.calls,
             cost_today_usd: self.day.cost_usd,
             calls_last_hour: self.recent_calls.len() as u32,
-            blocked: self.blocked(),
+            blocked: self.blocked().or_else(|| {
+                (self.cfg.enabled && self.in_practice())
+                    .then(|| "Practice: no automatic comments until qualifying or the race. Ask still works.".to_string())
+            }),
             last_error: self.last_error.clone(),
             config: Some(self.cfg.clone()),
         }
@@ -680,6 +747,11 @@ impl Ai {
         if self.busy || self.blocked().is_some() || st.laps_completed < 1 {
             return None;
         }
+        // No spending on the practice before the race.
+        if crate::session_kind::is_practice(&st.session_type) {
+            self.pending_event = None;
+            return None;
+        }
         let spaced = self.last_auto.map(|t| t.elapsed().as_secs_f64() >= self.cfg.min_interval_s).unwrap_or(true);
         if let Some((kind, at)) = &self.pending_event {
             if at.elapsed() >= EVENT_DEBOUNCE && spaced {
@@ -703,26 +775,10 @@ pub async fn run(
     mut commands: mpsc::UnboundedReceiver<AiCommand>,
 ) {
     let key = std::env::var(KEY_ENV).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
-    let mut ai = Ai {
-        cfg: load::<AiConfig>("ai.json").sanitized(),
-        key,
-        world: World::default(),
-        comments: VecDeque::new(),
-        next_id: 1,
-        day: load("ai_usage.json"),
-        recent_calls: VecDeque::new(),
-        last_auto: None,
-        last_any: None,
-        busy: false,
-        last_error: None,
-        pause_until: None,
-        last_lap_commented: 0,
-        pending_event: None,
-        queued_question: None,
-    };
+    let mut ai = Ai::new(load::<AiConfig>("ai.json").sanitized(), key, load("ai_usage.json"));
     info!("AI comments: {} (API key {})", if ai.cfg.enabled { "on" } else { "off" }, if ai.key.is_some() { "present" } else { "absent" });
 
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(String, Option<String>, f64, i64, Instant, Outcome, String)>();
+    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(String, Option<String>, f64, i64, Instant, Outcome, String, u64)>();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_status = Instant::now() - STATUS_REFRESH;
 
@@ -736,17 +792,7 @@ pub async fn run(
             r = rx.recv() => match r {
                 Ok(msg) => {
                     match &*msg {
-                        ServerMessage::StrategyUpdate(s) => {
-                            ai.world.strategy = Some((**s).clone());
-                            if ai.last_lap_commented == 0 && s.laps_completed > 0 {
-                                // First plan seen: count from here, do not
-                                // comment on laps that went by before.
-                                ai.last_lap_commented = s.laps_completed;
-                            }
-                            if s.laps_completed < ai.last_lap_commented {
-                                ai.last_lap_commented = s.laps_completed;
-                            }
-                        }
+                        ServerMessage::StrategyUpdate(s) => ai.on_strategy((**s).clone()),
                         ServerMessage::RaceTiming(t) => {
                             if t.events.len() < ai.world.events_seen {
                                 ai.world.events_seen = 0;
@@ -785,7 +831,7 @@ pub async fn run(
                                     Some("StrategyUpdate") => {
                                         // On a hub, relayed: decode it like our own.
                                         if let Ok(s) = rmpv::ext::from_value::<StrategyReport>(v.clone()) {
-                                            ai.world.strategy = Some(s);
+                                            ai.on_strategy(s);
                                         }
                                     }
                                     _ => {}
@@ -823,7 +869,7 @@ pub async fn run(
                     }
                 }
             },
-            Some((trigger, question, st, lap, started, outcome, snapshot_text)) = done_rx.recv() => {
+            Some((trigger, question, st, lap, started, outcome, snapshot_text, gen)) = done_rx.recv() => {
                 ai.busy = false;
                 ai.roll_day();
                 match outcome {
@@ -853,7 +899,9 @@ pub async fn run(
                             latency_ms: started.elapsed().as_millis() as u64,
                         };
                         ai.next_id += 1;
-                        ai.comments.push_back(c);
+                        if gen == ai.session_gen {
+                            ai.comments.push_back(c);
+                        }
                         while ai.comments.len() > KEEP_COMMENTS {
                             ai.comments.pop_front();
                         }
@@ -902,12 +950,13 @@ pub async fn run(
             ai.recent_calls.push_back(Instant::now());
             let cfg = ai.cfg.clone();
             let done = done_tx.clone();
+            let gen = ai.session_gen;
             send(&ai);
             info!("AI: asking for a comment ({})", trigger);
             tokio::task::spawn_blocking(move || {
                 let started = Instant::now();
                 let outcome = call_api(&key, &cfg, &snapshot, &previous);
-                let _ = done.send((trigger, question, st, lap, started, outcome, snapshot_text));
+                let _ = done.send((trigger, question, st, lap, started, outcome, snapshot_text, gen));
             });
         }
     }
@@ -916,6 +965,28 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn practice_is_silent_and_the_race_starts_clean() {
+        let cfg = AiConfig { enabled: true, ..Default::default() };
+        let mut ai = Ai::new(cfg, Some("test".into()), DayUsage::default());
+        let plan = |stype: &str, t: f64, laps: i64| StrategyReport {
+            session_type: stype.into(), session_time: t, laps_completed: laps, ..Default::default()
+        };
+        ai.on_strategy(plan("Practice", 100.0, 1));
+        ai.on_strategy(plan("Practice", 900.0, 9));
+        assert_eq!(ai.due(), None);
+        assert!(ai.status().blocked.unwrap().starts_with("Practice"));
+        ai.comments.push_back(AiComment { id: 1, text: "from practice".into(), ..Default::default() });
+        // The race: nothing from practice is left, and comments come again.
+        ai.on_strategy(plan("Race", 50.0, 0));
+        assert!(ai.comments.is_empty());
+        assert_eq!(ai.session_gen, 1);
+        assert_eq!(ai.status().blocked, None);
+        ai.on_strategy(plan("Race", 200.0, 1));
+        ai.on_strategy(plan("Race", 400.0, 3));
+        assert_eq!(ai.due().as_deref(), Some("lap"));
+    }
 
     #[test]
     fn defaults_are_off_and_cheap() {

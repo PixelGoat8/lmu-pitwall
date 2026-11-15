@@ -48,6 +48,11 @@ Se la chiave viene rifiutata, l'AI si spegne da sola e il widget dice perché.
 
 Tra due commenti automatici passano almeno *Min interval* secondi (predefinito 60).
 
+**Prove:** in Practice, Test Day e Warmup non ci sono commenti automatici, così
+le prove non consumano il budget. **Ask** funziona lo stesso, utile per
+provare la chiave prima della gara. Quando inizia una nuova sessione i commenti
+precedenti spariscono e non vengono più mandati all'AI come contesto.
+
 ## Costi
 
 | Impostazione | Predefinito |

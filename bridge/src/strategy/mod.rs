@@ -514,6 +514,12 @@ impl Engine {
             info!("Strategy: pit loss measurement {:.1} s discarded as implausible", lane);
             return false;
         }
+        if crate::session_kind::is_practice(&self.session_type) {
+            // Practice stops (garage visits, setup changes) do not feed the
+            // figure the race plan uses.
+            info!("Strategy: pit loss {:.1} s measured in {}, not kept", lane, self.session_type);
+            return false;
+        }
         info!("Strategy: pit lane loss at {} measured {:.1} s (stationary {:.1} s)", self.track, lane, p.stationary_s);
         self.pit_loss.add(&self.track, lane);
         true
@@ -756,8 +762,13 @@ mod tests {
     }
 
     fn scoring(t: f64, laps: i64, dist: f64, in_pits: bool, pit_state: i64, last: f64, ve: f64, control: i64) -> Value {
+        scoring_in("Race", t, laps, dist, in_pits, pit_state, last, ve, control)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scoring_in(stype: &str, t: f64, laps: i64, dist: f64, in_pits: bool, pit_state: i64, last: f64, ve: f64, control: i64) -> Value {
         v(serde_json::json!({
-            "type": "ScoringUpdate", "session_type": "Race", "session_time": t, "player_vehicle_id": 3,
+            "type": "ScoringUpdate", "session_type": stype, "session_time": t, "player_vehicle_id": 3,
             "vehicles": [{"id": 3, "total_laps": laps, "lap_dist": dist, "in_pits": in_pits, "pit_state": pit_state,
                           "control": control, "last_lap_time": last, "virtual_energy": ve, "driver_name": "Alice"}]
         }))
@@ -833,21 +844,32 @@ mod tests {
         assert!(r.notes.iter().any(|n| n.contains("only read on the PC that is driving")));
     }
 
+    /// Five laps, then a stop whose lane loss works out at 30 s. Returns
+    /// (lap completed, pit loss recorded) for the out-lap, and the stop time.
+    fn pit_stop_in(e: &mut Engine, stype: &str) -> ((bool, bool), f64) {
+        let sc = |t, laps, dist, in_pits, ps, last, ve| scoring_in(stype, t, laps, dist, in_pits, ps, last, ve, 0);
+        e.on_message(&session_info());
+        e.on_message(&sc(0.0, 0, 10.0, false, 0, -1.0, 1.0));
+        let mut t = 0.0;
+        for lap in 0..5 {
+            e.on_message(&sc(t + 45.0, lap, 2500.0, false, 0, if lap > 0 { 90.0 } else { -1.0 }, 1.0));
+            e.on_message(&sc(t + 90.0, lap + 1, 10.0, false, 0, 90.0, 1.0));
+            t += 90.0;
+        }
+        // Lap 6: into the pits at 4000 m. Stationary 30 s. Lap time 140 s.
+        e.on_message(&sc(t + 70.0, 5, 4000.0, true, 2, 90.0, 0.8));
+        e.on_message(&sc(t + 80.0, 5, 4500.0, true, 3, 90.0, 0.8));
+        e.on_message(&sc(t + 110.0, 5, 4600.0, true, 4, 90.0, 1.0));
+        e.on_message(&sc(t + 120.0, 6, 50.0, true, 4, 140.0, 1.0));
+        e.on_message(&sc(t + 125.0, 6, 300.0, false, 0, 140.0, 1.0));
+        // Out-lap completes in 100 s: (140 + 100) − 2 × 90 − 30 = 30 s.
+        (e.on_message(&sc(t + 220.0, 7, 10.0, false, 0, 100.0, 0.96)), t)
+    }
+
     #[test]
     fn a_pit_stop_measures_the_lane_loss() {
         let mut e = Engine::new(StrategyConfig::default(), PitLossStore::default());
-        e.on_message(&session_info());
-        e.on_message(&scoring(0.0, 0, 10.0, false, 0, -1.0, 1.0, 0));
-        let t = drive(&mut e, 0, 5, 0.0, 90.0, 1.0);
-        // Lap 6: into the pits at 4000 m. Stationary 30 s. Lap time 120 s.
-        e.on_message(&scoring(t + 70.0, 5, 4000.0, true, 2, 90.0, 0.8, 0));
-        e.on_message(&scoring(t + 80.0, 5, 4500.0, true, 3, 90.0, 0.8, 0));
-        e.on_message(&scoring(t + 110.0, 5, 4600.0, true, 4, 90.0, 1.0, 0));
-        e.on_message(&scoring(t + 120.0, 6, 50.0, true, 4, 140.0, 1.0, 0));
-        e.on_message(&scoring(t + 125.0, 6, 300.0, false, 0, 140.0, 1.0, 0));
-        // Out-lap completes in 100 s: (140 + 100) − 2 × 90 − 30 = 30 s.
-        e.on_message(&telemetry(88.0, 1.0));
-        let (done, new_loss) = e.on_message(&scoring(t + 220.0, 7, 10.0, false, 0, 100.0, 0.96, 0));
+        let ((done, new_loss), t) = pit_stop_in(&mut e, "Race");
         assert!(done && new_loss);
         let r = e.report();
         assert_eq!(r.pit_loss.source, "measured");
@@ -856,6 +878,15 @@ mod tests {
         // A manual figure wins.
         e.cfg.pit_lane_loss_s = Some(25.0);
         assert_eq!(e.report().pit_loss.source, "manual");
+    }
+
+    #[test]
+    fn a_practice_stop_is_not_kept() {
+        let mut e = Engine::new(StrategyConfig::default(), PitLossStore::default());
+        let ((done, new_loss), _) = pit_stop_in(&mut e, "Practice");
+        assert!(done && !new_loss);
+        assert_eq!(e.pit_loss_store().get("Test Ring"), None);
+        assert_eq!(e.report().pit_loss.source, "none");
     }
 
     #[test]
