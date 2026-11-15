@@ -17,6 +17,7 @@
 
 import { useRef, useMemo, useEffect, useState, useCallback } from 'react'
 import { useTelemetryStore } from '../../stores/telemetryStore'
+import { classNeighbours } from '../../utils/gaps'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
 import { CLASS_COLORS, getClassColor } from '../../utils/classColors'
@@ -120,7 +121,12 @@ interface Marker {
   color: string
   label: number
   isPlayer: boolean
+  /** The car one place ahead of or behind ours in our class. */
+  isRival: boolean
 }
+
+/** Ring drawn around the class rivals directly ahead and behind. */
+const RIVAL_STROKE = '#f97316'
 
 export default function TrackMap() {
   const trackName = useTelemetryStore((s) => s.session.track_name)
@@ -140,13 +146,15 @@ export default function TrackMap() {
     if (key === rosterCache.current.key) return rosterCache.current.list
 
     const rankInClass = new Map<string, number>()
+    const n = classNeighbours(vehicles, player_vehicle_id)
+    const rivals = new Set([n?.ahead?.id, n?.behind?.id].filter((x): x is number => x !== undefined))
     const list = [...vehicles]
       .sort((a, b) => a.position - b.position)
       .map((v) => {
         const cls = v.vehicle_class || ''
         const rank = (rankInClass.get(cls) ?? 0) + 1
         rankInClass.set(cls, rank)
-        return { id: v.id, color: getClassColor(cls), label: rank || v.position, isPlayer: v.id === player_vehicle_id }
+        return { id: v.id, color: getClassColor(cls), label: rank || v.position, isPlayer: v.id === player_vehicle_id, isRival: rivals.has(v.id) }
       })
     rosterCache.current = { key, list }
     return list
@@ -526,6 +534,9 @@ export default function TrackMap() {
                 <g key={v.id} ref={(node) => attachMarker(v.id, node)} opacity={0}>
                   {v.isPlayer && (
                     <circle r={r + 5} fill="none" stroke={PLAYER_STROKE} strokeWidth={1.5} opacity={0.35} />
+                  )}
+                  {v.isRival && (
+                    <circle r={r + 4} fill="none" stroke={RIVAL_STROKE} strokeWidth={2} strokeDasharray="3 2" />
                   )}
                   <circle
                     r={r}

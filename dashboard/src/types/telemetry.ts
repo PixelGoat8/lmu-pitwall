@@ -94,6 +94,7 @@ export interface VehicleScoring {
   laps_behind_next?: number
   num_pitstops?: number
   pit_state?: number          // 0 none, 1 request, 2 entering, 3 stopped, 4 exiting
+  num_penalties?: number      // penalties still to serve
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +343,7 @@ export interface HubError {
 }
 
 import type { PitInfoMsg, StrategyUpdate } from './strategy'
+import type { RaceTiming } from './race'
 
 export type ServerMessage =
   | TelemetryUpdate
@@ -358,3 +360,4 @@ export type ServerMessage =
   | HubError
   | StrategyUpdate
   | PitInfoMsg
+  | RaceTiming

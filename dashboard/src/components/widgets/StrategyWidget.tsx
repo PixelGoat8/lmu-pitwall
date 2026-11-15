@@ -246,7 +246,11 @@ function PitAndWeather({ s }: { s: StrategyUpdate }) {
           loss {pl.lane_loss_s !== null ? `${pl.lane_loss_s.toFixed(1)} s` : dash}
           {pl.source === 'measured' ? ` (measured, ${pl.samples} stop${pl.samples > 1 ? 's' : ''})` : pl.source === 'manual' ? ' (set by hand)' : ''}
         </span>
-        {est ? <span style={line} title="The game's own estimate for the pit menu as it is set now">game estimate for the menu as set: {est.total.toFixed(1)} s</span> : null}
+        {est ? (
+          <span style={line} title="The game's own estimate for the pit menu as it is set now">
+            {est.total > 0 ? `game estimate for the menu as set: ${est.total.toFixed(1)} s` : 'pit menu empty: nothing to compare with yet'}
+          </span>
+        ) : null}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
         <span style={sectionTitle}>Weather</span>

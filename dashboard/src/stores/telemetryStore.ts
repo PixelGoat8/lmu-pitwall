@@ -13,6 +13,7 @@ import type {
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import type { HubStatus, HubStintInfo } from '../types/telemetry'
 import type { StrategyUpdate } from '../types/strategy'
+import type { RaceTiming } from '../types/race'
 
 // ---------------------------------------------------------------------------
 // Lap history
@@ -140,6 +141,8 @@ interface TelemetryStore {
   hub: HubSection
   // Latest plan from the bridge's strategy engine; null outside a session.
   strategy: StrategyUpdate | null
+  // Race event log and recent laps of every car, from the bridge.
+  raceTiming: RaceTiming | null
   lapHistory: LapEntry[]
   weatherHistory: WeatherSnapshot[]
   _lapTracking: { prevTotalLaps: number; prevPlayerId: number }
@@ -308,6 +311,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   versionInfo: null,
   hub: { status: null, stints: [], error: null },
   strategy: null,
+  raceTiming: null,
   lapHistory: [],
   weatherHistory: [],
   _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
@@ -542,6 +546,10 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
 
       case 'StrategyUpdate':
         set({ strategy: msg })
+        break
+
+      case 'RaceTiming':
+        set({ raceTiming: msg })
         break
 
       case 'HubStatus':
