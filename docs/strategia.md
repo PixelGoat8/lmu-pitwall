@@ -100,8 +100,12 @@ altro giro verde").
   consumo che chiedi al pilota, per esempio `3.2` per 3,2 %/giro, e premi
   *Set*. Il widget mostra di quanto è sopra o sotto, i secondi di LiCo
   necessari (o il margine) e, a quel consumo, giri rimasti, durata di un pieno
-  e soste. Il piano principale resta sul consumo misurato. *Clear* toglie il
-  target. Si può impostare anche dalle impostazioni, anche prima che ci sia un
+  e soste. Con un target impostato, il numero di soste e la finestra box in
+  alto sono quelli **al target** (*1 STOP at target*): la gara che la squadra
+  intende fare. Subito sotto c'è lo stesso piano al consumo misurato finora
+  (*at current use: 2 stops…*), in rosso quando le soste sono diverse.
+  Un'energia senza target conta col suo consumo misurato. La tabella *Box in …
+  laps* resta sul consumo misurato. *Clear* toglie il target. Si può impostare anche dalle impostazioni, anche prima che ci sia un
   consumo misurato.
 
 ## Impostazioni (⚙ settings nel widget)

@@ -250,17 +250,25 @@ function Energy({ s }: { s: StrategyUpdate }) {
   )
 }
 
+const stopsText = (n: number) => (n === 0 ? 'NO STOP' : `${n} STOP${n > 1 ? 'S' : ''}`)
+
 function Plan({ s }: { s: StrategyUpdate }) {
-  const p = s.plan
+  const measured = s.plan
+  // With a target set, the headline is the race the team intends to run;
+  // the consumption so far is the warning underneath.
+  const target = s.plan_at_target ?? null
+  const p = target ?? measured
   if (!p) return null
   const w = p.window
   const current = s.laps_completed + 1
   const limitText = p.limiting === 've' ? 'virtual energy' : p.limiting
+  const differs = target && measured && measured.stops !== target.stops
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span style={{ fontFamily: fonts.mono, fontSize: 20, fontWeight: 700, color: p.stops > 0 ? colors.primary : colors.success }}>
-          {p.stops === 0 ? 'NO STOP' : `${p.stops} STOP${p.stops > 1 ? 'S' : ''}`}
+          {stopsText(p.stops)}
+          {target ? <span style={{ fontSize: 13, fontWeight: 400, color: colors.textMuted }}> at target</span> : null}
         </span>
         <span style={line}>
           {w
@@ -270,6 +278,15 @@ function Plan({ s }: { s: StrategyUpdate }) {
         </span>
       </div>
       {w ? <WindowBar current={current} earliest={w.earliest_lap} latest={w.latest_lap} toGo={s.horizon?.laps_to_go ?? null} /> : null}
+      {target && measured ? (
+        <span
+          style={{ ...line, color: differs ? colors.danger : colors.textMuted }}
+          title="The same plan at the consumption measured so far, without the target"
+        >
+          {differs ? '⚠ ' : ''}at current use: {stopsText(measured.stops).toLowerCase()}
+          {measured.window ? `, box between laps ${measured.window.earliest_lap} and ${measured.window.latest_lap}` : ''}
+        </span>
+      ) : null}
     </div>
   )
 }

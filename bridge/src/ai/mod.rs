@@ -395,6 +395,12 @@ impl World {
                     "pit_window_laps": p.window.as_ref().map(|w| format!("{}-{}", w.earliest_lap, w.latest_lap)),
                 });
             }
+            if let Some(p) = &st.plan_at_target {
+                snap["plan_at_engineer_target"] = json!({
+                    "stops_to_finish": p.stops,
+                    "pit_window_laps": p.window.as_ref().map(|w| format!("{}-{}", w.earliest_lap, w.latest_lap)),
+                });
+            }
             let rows: Vec<serde_json::Value> = st.what_if.iter().take(4).map(|w| json!({
                 "box_in_laps": w.in_laps,
                 "on_lap": w.pit_lap,

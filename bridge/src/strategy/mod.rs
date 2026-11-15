@@ -247,6 +247,9 @@ pub struct StrategyReport {
     pub fuel: Option<EnergyPlan>,
     pub ve: Option<EnergyPlan>,
     pub plan: Option<PlanSummary>,
+    /// The plan at the engineer's target consumption, when one is set.
+    #[serde(default)]
+    pub plan_at_target: Option<PlanSummary>,
     pub what_if: Vec<WhatIf>,
     pub tyres: TyrePlan,
     pub tyre_choice: Option<TyreChoice>,
@@ -320,6 +323,33 @@ pub struct Engine {
     lap_samples: u32,
     lap_coast_samples: u32,
     lap_watched: bool,
+}
+
+/// Stops and the pit window from the limits on a stint: for each, its name,
+/// how far the car can go from here, the longest stint it allows, and the
+/// stops it needs on its own (`None` for the stint time limit).
+fn plan_from(limits: Vec<(&'static str, f64, f64, Option<u32>)>, to_go: Option<f64>, p: f64, current_lap: i64) -> Option<PlanSummary> {
+    if limits.is_empty() {
+        return None;
+    }
+    let mut stops = limits.iter().filter_map(|l| l.3).max().unwrap_or(0);
+    let range = limits.iter().map(|l| l.1).fold(f64::INFINITY, f64::min);
+    let (limiting, _, stint_max, _) = limits.iter().copied().min_by(|a, b| a.2.total_cmp(&b.2)).unwrap();
+    // The stint limit can force stops the tank does not.
+    if let Some(go) = to_go {
+        if go > range {
+            let more = ((go - range) / stint_max.max(1.0)).ceil() as u32;
+            stops = stops.max(more.max(1));
+        }
+    }
+    let window = to_go.and_then(|go| pit_window(go, p, current_lap, range, stint_max, stops));
+    Some(PlanSummary {
+        stops: window.as_ref().map(|w| w.stops).unwrap_or(stops),
+        limiting: limiting.to_string(),
+        stint_laps_max: stint_max,
+        range_laps: range,
+        window,
+    })
 }
 
 /// The engineer's target for one energy: "box at the end of lap N" if set,
@@ -698,37 +728,38 @@ impl Engine {
         let stint = StintInfo { started_at: self.stint_start, elapsed_s: elapsed, limit_s };
 
         // --- plan ---------------------------------------------------------
-        let mut limits: Vec<(&str, f64, f64)> = Vec::new(); // (name, range from here, stint max)
-        if let Some(f) = &fuel {
-            limits.push(("fuel", f.laps_left, f.stint_laps_max));
-        }
-        if let Some(v) = &ve {
-            limits.push(("ve", v.laps_left, v.stint_laps_max));
-        }
-        if let (Some(lim), Some(lap)) = (limit_s, ref_lap) {
-            let left = (lim - elapsed.unwrap_or(0.0)).max(0.0) / lap;
-            limits.push(("stint time", left, lim / lap));
-        }
-        let mut energy_stops = fuel.as_ref().and_then(|f| f.stops).unwrap_or(0).max(ve.as_ref().and_then(|v| v.stops).unwrap_or(0));
-        let plan = (!limits.is_empty()).then(|| {
-            let range = limits.iter().map(|l| l.1).fold(f64::INFINITY, f64::min);
-            let (limiting, _, stint_max) = limits.iter().copied().min_by(|a, b| a.2.total_cmp(&b.2)).unwrap();
-            // The stint limit can force stops the tank does not.
-            if let Some(go) = to_go {
-                if go > range {
-                    let more = ((go - range) / stint_max.max(1.0)).ceil() as u32;
-                    energy_stops = energy_stops.max(more.max(1));
-                }
-            }
-            let window = to_go.and_then(|go| pit_window(go, p, current_lap, range, stint_max, energy_stops));
-            PlanSummary {
-                stops: window.as_ref().map(|w| w.stops).unwrap_or(energy_stops),
-                limiting: limiting.to_string(),
-                stint_laps_max: stint_max,
-                range_laps: range,
-                window,
-            }
-        });
+        // (name, range from here, stint max, stops) for each limit.
+        let stint_limit = match (limit_s, ref_lap) {
+            (Some(lim), Some(lap)) => Some(("stint time", (lim - elapsed.unwrap_or(0.0)).max(0.0) / lap, lim / lap, None)),
+            _ => None,
+        };
+        let measured = |e: &Option<EnergyPlan>, name: &'static str| e.as_ref().map(|e| (name, e.laps_left, e.stint_laps_max, e.stops));
+        let plan = plan_from(
+            [measured(&fuel, "fuel"), measured(&ve, "ve"), stint_limit].into_iter().flatten().collect(),
+            to_go,
+            p,
+            current_lap,
+        );
+        // The same plan at the engineer's target consumption, where one is
+        // set: the race the team intends to run, against the one the
+        // consumption so far gives.
+        let at_target = |e: &Option<EnergyPlan>, name: &'static str| {
+            e.as_ref().map(|e| match &e.target {
+                Some(t) => (name, t.laps_left, t.stint_laps_max, t.stops),
+                None => (name, e.laps_left, e.stint_laps_max, e.stops),
+            })
+        };
+        let has_target = [&fuel, &ve].iter().any(|e| e.as_ref().is_some_and(|e| e.target.is_some()));
+        let plan_at_target = if has_target {
+            plan_from(
+                [at_target(&fuel, "fuel"), at_target(&ve, "ve"), stint_limit].into_iter().flatten().collect(),
+                to_go,
+                p,
+                current_lap,
+            )
+        } else {
+            None
+        };
         if to_go.is_none() {
             notes.push("Race length unknown: no stop count or pit window.".into());
         }
@@ -777,6 +808,7 @@ impl Engine {
             fuel,
             ve,
             plan,
+            plan_at_target,
             what_if,
             tyres,
             tyre_choice,
@@ -1007,6 +1039,25 @@ mod tests {
         let coast: Vec<Option<f64>> = e.laps.iter().map(|l| l.coast_s).collect();
         assert_eq!(coast[0], None);
         assert!(coast[1..].iter().all(|c| (c.unwrap() - 9.0).abs() < 1e-9), "{coast:?}");
+    }
+
+    #[test]
+    fn a_target_gives_the_plan_the_team_intends() {
+        // 60-minute race at 4 % VE a lap: one stop. At 2 %/lap the 76 %
+        // left covers the ~34 laps to go and the reserve, and so do 72 L at 2 L/lap:
+        // none. (An energy without a target keeps its measured stops.)
+        let cfg = StrategyConfig { ve_target_per_lap: Some(0.02), fuel_target_per_lap: Some(2.0), ..Default::default() };
+        let mut e = Engine::new(cfg, PitLossStore::default());
+        e.on_message(&session_info());
+        e.on_message(&scoring(0.0, 0, 10.0, false, 0, -1.0, 1.0, 0));
+        drive(&mut e, 0, 6, 0.0, 90.0, 1.0);
+        let r = e.report();
+        assert_eq!(r.plan.as_ref().unwrap().stops, 1);
+        assert_eq!(r.plan_at_target.as_ref().unwrap().stops, 0);
+        // Without a target there is no second plan.
+        e.cfg.ve_target_per_lap = None;
+        e.cfg.fuel_target_per_lap = None;
+        assert!(e.report().plan_at_target.is_none());
     }
 
     #[test]

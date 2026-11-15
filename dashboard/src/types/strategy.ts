@@ -142,6 +142,8 @@ export interface StrategyUpdate {
   fuel: EnergyPlan | null
   ve: EnergyPlan | null
   plan: PlanSummary | null
+  /** The plan at the engineer's target consumption, when one is set. */
+  plan_at_target?: PlanSummary | null
   what_if: WhatIf[]
   tyres: TyrePlan
   tyre_choice: TyreChoice | null
