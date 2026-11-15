@@ -4,8 +4,8 @@ import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
 import type { TireData } from '../../types/telemetry'
 import SpectatedNotice from '../SpectatedNotice'
-import { tyreStatus, tyreTempColor, unevenWear } from '../../utils/tyreStatus'
-import type { TyreSeverity } from '../../utils/tyreStatus'
+import { tyreStatus, tyreTempColor, tyreWindow, unevenWear } from '../../utils/tyreStatus'
+import type { TyreSeverity, TyreWindow } from '../../utils/tyreStatus'
 
 const SEVERITY_COLOR: Record<TyreSeverity, string> = {
   ok: '#22c55e',
@@ -17,8 +17,8 @@ const SEVERITY_COLOR: Record<TyreSeverity, string> = {
 // ---------------------------------------------------------------------------
 // StatusChip — the one thing most worth saying about this tyre, in words
 // ---------------------------------------------------------------------------
-function StatusChip({ tire, compact = false }: { tire: TireData; compact?: boolean }) {
-  const st = tyreStatus(tire)
+function StatusChip({ tire, win, compact = false }: { tire: TireData; win: TyreWindow; compact?: boolean }) {
+  const st = tyreStatus(tire, win)
   if (!st.label) return <span style={{ height: compact ? 13 : 17 }} />
   const col = SEVERITY_COLOR[st.severity]
   const alert = st.severity === 'warn' || st.severity === 'danger'
@@ -123,7 +123,7 @@ function BrakeBar({ tempC }: { tempC: number }) {
 
 type CellSize = 'tiny' | 'normal'
 
-function TireCell({ label, tire, size, mirror = false }: { label: string; tire: TireData; size: CellSize; mirror?: boolean }) {
+function TireCell({ label, tire, size, win, mirror = false }: { label: string; tire: TireData; size: CellSize; win: TyreWindow; mirror?: boolean }) {
   const toDisplayTemp     = useSettingsStore((s) => s.toDisplayTemp)
   const tempUnitLabel     = useSettingsStore((s) => s.tempUnitLabel)
   const toDisplayPressure = useSettingsStore((s) => s.toDisplayPressure)
@@ -132,7 +132,7 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
   const carcassTempC     = tire.carcass_temp
   const carcassTempDisplay = toDisplayTemp(carcassTempC)
   const pressureDisplay = toDisplayPressure(tire.pressure)
-  const pressureDec     = pressureUnitLabel() === 'psi' ? 0 : 1
+  const pressureDec     = pressureUnitLabel() === 'psi' ? 1 : 2
 
   const wearPct          = Math.round(tire.wear * 100)
   const wearCol          = wearColor(wearPct)
@@ -157,14 +157,14 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
         <span style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted, lineHeight: 1, letterSpacing: 1 }}>{label}</span>
         <div style={{ display: 'flex', gap: 2, height: 20, width: 24 }}>
           {[tire.temp_inner, tire.temp_mid, tire.temp_outer].map((t, i) => (
-            <div key={i} style={{ flex: 1, background: tyreTempColor(t, tire.optimal_temp), borderRadius: 2, opacity: 0.85 }} />
+            <div key={i} style={{ flex: 1, background: tyreTempColor(t, win), borderRadius: 2, opacity: 0.85 }} />
           ))}
         </div>
         <span style={txt(15, wearCol)}>W:{wearPct}%</span>
         <span style={txt(15, brakeCol)}>
           B:{hasData ? `${Math.round(brakeTempDisplay)}${tempUnitLabel()}` : '--'}
         </span>
-        <StatusChip tire={tire} compact />
+        <StatusChip tire={tire} win={win} compact />
       </div>
     )
   }
@@ -189,7 +189,7 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
           <div style={{ display: 'flex', gap: 2, height: 22, width: 30 }}>
             {[tire.temp_inner, tire.temp_mid, tire.temp_outer].map((t, i) => (
-              <div key={i} style={{ flex: 1, background: tyreTempColor(t, tire.optimal_temp), borderRadius: 2, opacity: 0.85 }} />
+              <div key={i} style={{ flex: 1, background: tyreTempColor(t, win), borderRadius: 2, opacity: 0.85 }} />
             ))}
           </div>
           <span style={txt(15, colors.text)}>
@@ -221,7 +221,62 @@ function TireCell({ label, tire, size, mirror = false }: { label: string; tire: 
       </div>
 
       {/* Status in words: puncture, flat-spot risk, wear, temperature */}
-      <StatusChip tire={tire} />
+      <StatusChip tire={tire} win={win} />
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// WindowLine — the temperature window in use, editable
+// ---------------------------------------------------------------------------
+
+/**
+ * Which surface temperatures count as cold / hot: LMU's optimal temperature
+ * ± 15 °C by default, or thresholds the engineer sets here (kept in this
+ * browser). LMU's optimal figure does not always match the temperatures the
+ * game reports, hence the override.
+ */
+function WindowLine({ win, compact }: { win: TyreWindow; compact: boolean }) {
+  const cold = useSettingsStore((s) => s.tyreColdBelowC)
+  const hot = useSettingsStore((s) => s.tyreHotAboveC)
+  const update = useSettingsStore((s) => s.update)
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState({ cold: '', hot: '' })
+  const num = (v: string) => { const n = Number(v.replace(',', '.')); return v.trim() !== '' && isFinite(n) ? n : null }
+  const c = num(draft.cold)
+  const h = num(draft.hot)
+  const valid = c !== null && h !== null && h > c
+  const source = win.source === 'manual' ? 'set by hand' : win.source === 'lmu' ? 'LMU optimal ±15' : 'default'
+  const text = `window ${win.coldBelowC.toFixed(0)}–${win.hotAboveC.toFixed(0)} °C · ${source}`
+  const field: React.CSSProperties = {
+    width: 52, background: colors.bgCard, border: `1px solid ${colors.border}`, color: colors.text,
+    fontFamily: fonts.mono, fontSize: 13, padding: '2px 4px', borderRadius: 3,
+  }
+  const btn = (active: boolean): React.CSSProperties => ({
+    fontFamily: fonts.body, fontSize: 12, padding: '2px 8px', borderRadius: 3, cursor: 'pointer',
+    background: active ? colors.primary : 'transparent', color: active ? '#000' : colors.textMuted,
+    border: `1px solid ${active ? colors.primary : colors.border}`,
+  })
+  if (!open) {
+    return (
+      <button
+        onClick={() => { setDraft({ cold: cold !== null ? String(cold) : '', hot: hot !== null ? String(hot) : '' }); setOpen(true) }}
+        title="Surface temperature window used for the colours and COLD / HOT. Click to set your own."
+        style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontFamily: fonts.body, fontSize: compact ? 11 : 12, color: colors.textMuted, padding: 0 }}
+      >
+        {text} ✎
+      </button>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap', justifyContent: 'center', fontFamily: fonts.body, fontSize: 12, color: colors.textMuted }}>
+      cold below
+      <input value={draft.cold} inputMode="decimal" placeholder="°C" onChange={(e) => setDraft((d) => ({ ...d, cold: e.target.value }))} style={field} />
+      hot above
+      <input value={draft.hot} inputMode="decimal" placeholder="°C" onChange={(e) => setDraft((d) => ({ ...d, hot: e.target.value }))} style={field} />
+      <button disabled={!valid} onClick={() => { update({ tyreColdBelowC: c, tyreHotAboveC: h }); setOpen(false) }} style={{ ...btn(valid), opacity: valid ? 1 : 0.5 }}>Set</button>
+      <button onClick={() => { update({ tyreColdBelowC: null, tyreHotAboveC: null }); setOpen(false) }} style={btn(false)} title="Back to LMU's optimal temperature ± 15 °C">Use LMU</button>
+      <button onClick={() => setOpen(false)} style={btn(false)}>✕</button>
     </div>
   )
 }
@@ -262,6 +317,10 @@ function TireMonitorInner() {
   const defaultTire: TireData = { temp_inner: 0, temp_mid: 0, temp_outer: 0, carcass_temp: 0, pressure: 0, wear: 0, brake_temp: 0 }
   const [fl, fr, rl, rr] = tires ?? [defaultTire, defaultTire, defaultTire, defaultTire]
   const uneven = unreliable ? null : unevenWear([fl, fr, rl, rr])
+  const coldBelowC = useSettingsStore((s) => s.tyreColdBelowC)
+  const hotAboveC = useSettingsStore((s) => s.tyreHotAboveC)
+  const manual = { coldBelowC, hotAboveC }
+  const winOf = (t: TireData) => tyreWindow(t.optimal_temp, manual)
 
   const gap     = size === 'tiny' ? 6 : 8
   const cellGap = size === 'tiny' ? '4px 8px' : '6px 14px'
@@ -283,10 +342,10 @@ function TireMonitorInner() {
         opacity: unreliable ? 0.3 : 1,
         filter: unreliable ? 'grayscale(1)' : undefined,
       }}>
-        <TireCell label="FL" tire={fl} size={size} mirror />
-        <TireCell label="FR" tire={fr} size={size} />
-        <TireCell label="RL" tire={rl} size={size} mirror />
-        <TireCell label="RR" tire={rr} size={size} />
+        <TireCell label="FL" tire={fl} size={size} win={winOf(fl)} mirror />
+        <TireCell label="FR" tire={fr} size={size} win={winOf(fr)} />
+        <TireCell label="RL" tire={rl} size={size} win={winOf(rl)} mirror />
+        <TireCell label="RR" tire={rr} size={size} win={winOf(rr)} />
       </div>
       {unreliable ? (
         <div style={{
@@ -311,6 +370,9 @@ function TireMonitorInner() {
           {uneven && size !== 'tiny' ? (
             <div style={{ fontSize: 12, letterSpacing: 0, textTransform: 'none', color: colors.accent }}>{uneven}</div>
           ) : null}
+          <div style={{ letterSpacing: 0, textTransform: 'none' }}>
+            <WindowLine win={winOf(fl)} compact={size === 'tiny'} />
+          </div>
         </div>
       )}
     </div>

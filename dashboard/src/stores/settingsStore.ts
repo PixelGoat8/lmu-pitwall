@@ -57,6 +57,10 @@ export interface SettingsState {
   battleShowSectors: boolean
   battleShowLaps: boolean       // best & last lap columns
   battleShowGap: boolean
+  // Tyres widget: surface temperature window set by hand, °C; null = use
+  // the window around LMU's optimal temperature.
+  tyreColdBelowC: number | null
+  tyreHotAboveC: number | null
   // Damage Widget
   damageDetail: DamageDetail
   // Weather Widget
@@ -79,7 +83,8 @@ interface SettingsStore extends SettingsState {
   speedUnitLabel: () => string
   toDisplayTemp: (celsius: number) => number
   tempUnitLabel: () => string
-  toDisplayPressure: (bar: number) => number
+  // Tyre pressure arrives in kPa (LMU's mPressure).
+  toDisplayPressure: (kpa: number) => number
   pressureUnitLabel: () => string
   toDisplayFuel: (liters: number) => number
   fuelUnitLabel: () => string
@@ -120,6 +125,8 @@ export const SETTINGS_DEFAULTS: SettingsState = {
   battleShowSectors: true,
   battleShowLaps: true,
   battleShowGap: true,
+  tyreColdBelowC: null,
+  tyreHotAboveC: null,
   // Damage Widget
   damageDetail: 'full',
   // Weather Widget
@@ -145,12 +152,12 @@ export const useSettingsStore = create<SettingsStore>()(
         const { speedUnit, tempUnit, pressureUnit, fuelUnit, lapReserve, wsHost, wsPort, primaryColor, accentColor, fpsLimit, inputChartFps,
           timeWidgetShowComputerTime, timeWidgetClockFormat, timeWidgetShowSessionElapsed, timeWidgetShowTimeRemaining, timeWidgetShowCurrentLap,
           standingsShowCompound, standingsShowCarType, standingsShowVE, standingsShowDamage, standingsClassFilter, standingsGapMode,
-          battleMode, battleValueMode, battleCount, battleShowPosName, battleShowSectors, battleShowLaps, battleShowGap, damageDetail, weatherDetail, trackMapDetail, resultsPath,
+          battleMode, battleValueMode, battleCount, battleShowPosName, battleShowSectors, battleShowLaps, battleShowGap, tyreColdBelowC, tyreHotAboveC, damageDetail, weatherDetail, trackMapDetail, resultsPath,
           postRaceSortCol, postRaceSortDir } = get()
         return JSON.stringify({ speedUnit, tempUnit, pressureUnit, fuelUnit, lapReserve, wsHost, wsPort, primaryColor, accentColor, fpsLimit, inputChartFps,
           timeWidgetShowComputerTime, timeWidgetClockFormat, timeWidgetShowSessionElapsed, timeWidgetShowTimeRemaining, timeWidgetShowCurrentLap,
           standingsShowCompound, standingsShowCarType, standingsShowVE, standingsShowDamage, standingsClassFilter, standingsGapMode,
-          battleMode, battleValueMode, battleCount, battleShowPosName, battleShowSectors, battleShowLaps, battleShowGap, damageDetail, weatherDetail, trackMapDetail, resultsPath,
+          battleMode, battleValueMode, battleCount, battleShowPosName, battleShowSectors, battleShowLaps, battleShowGap, tyreColdBelowC, tyreHotAboveC, damageDetail, weatherDetail, trackMapDetail, resultsPath,
           postRaceSortCol, postRaceSortDir }, null, 2)
       },
 
@@ -187,6 +194,8 @@ export const useSettingsStore = create<SettingsStore>()(
           if (typeof data.battleShowSectors === 'boolean') valid.battleShowSectors = data.battleShowSectors
           if (typeof data.battleShowLaps === 'boolean') valid.battleShowLaps = data.battleShowLaps
           if (typeof data.battleShowGap === 'boolean') valid.battleShowGap = data.battleShowGap
+          if (data.tyreColdBelowC === null || typeof data.tyreColdBelowC === 'number') valid.tyreColdBelowC = data.tyreColdBelowC
+          if (data.tyreHotAboveC === null || typeof data.tyreHotAboveC === 'number') valid.tyreHotAboveC = data.tyreHotAboveC
           if (data.damageDetail === 'compact' || data.damageDetail === 'medium' || data.damageDetail === 'full') valid.damageDetail = data.damageDetail
           if (data.weatherDetail === 'compact' || data.weatherDetail === 'medium' || data.weatherDetail === 'full') valid.weatherDetail = data.weatherDetail
           if (data.trackMapDetail === 'compact' || data.trackMapDetail === 'medium' || data.trackMapDetail === 'full') valid.trackMapDetail = data.trackMapDetail
@@ -204,7 +213,7 @@ export const useSettingsStore = create<SettingsStore>()(
       speedUnitLabel: () => get().speedUnit === 'mph' ? 'mph' : 'km/h',
       toDisplayTemp: (celsius) => get().tempUnit === 'fahrenheit' ? celsius * 9 / 5 + 32 : celsius,
       tempUnitLabel: () => get().tempUnit === 'fahrenheit' ? '°F' : '°C',
-      toDisplayPressure: (bar) => get().pressureUnit === 'psi' ? bar * 14.5038 : bar,
+      toDisplayPressure: (kpa) => get().pressureUnit === 'psi' ? kpa * 0.145038 : kpa / 100,
       pressureUnitLabel: () => get().pressureUnit === 'psi' ? 'psi' : 'bar',
       toDisplayFuel: (liters) => get().fuelUnit === 'gallons' ? liters * 0.264172 : liters,
       fuelUnitLabel: () => get().fuelUnit === 'gallons' ? 'gal' : 'L',

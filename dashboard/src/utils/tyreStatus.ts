@@ -37,23 +37,44 @@ export const TEMP_COLORS = {
   hot: '#ef4444',
 } as const
 
+/** Surface temperatures a tyre is happy at, and where it came from. */
+export interface TyreWindow {
+  coldBelowC: number
+  hotAboveC: number
+  /** Beyond this the tyre is overheating, not just warm. */
+  overheatAboveC: number
+  /** "manual": set in the widget; "lmu": around the game's optimal
+   *  temperature; "fixed": the widget's original thresholds. */
+  source: 'manual' | 'lmu' | 'fixed'
+}
+
+/** The engineer's own thresholds, when set (°C, surface). */
+export interface ManualTyreWindow { coldBelowC: number | null; hotAboveC: number | null }
+
 /**
- * Colour for a tyre temperature. Relative to the compound's optimal
- * temperature when the game provides it — a wet tyre and a hard slick are
- * happy at very different temperatures — and to fixed thresholds otherwise.
+ * The window a tyre is judged against: the engineer's thresholds when set,
+ * else around the compound's optimal temperature from the game — a wet tyre
+ * and a hard slick are happy at very different temperatures — else fixed.
  */
-export function tyreTempColor(tempC: number, optimalC?: number | null): string {
-  if (tempC <= 0) return TEMP_COLORS.none
-  if (optimalC && optimalC > 0) {
-    const d = tempC - optimalC
-    if (d < -TEMP_OK_BAND_C) return TEMP_COLORS.cold
-    if (d <= TEMP_OK_BAND_C) return TEMP_COLORS.ok
-    if (d <= TEMP_HOT_BAND_C) return TEMP_COLORS.warm
-    return TEMP_COLORS.hot
+export function tyreWindow(optimalC?: number | null, manual?: ManualTyreWindow | null): TyreWindow {
+  const c = manual?.coldBelowC
+  const h = manual?.hotAboveC
+  if (c != null && h != null && h > c) {
+    return { coldBelowC: c, hotAboveC: h, overheatAboveC: h + TEMP_HOT_BAND_C - TEMP_OK_BAND_C, source: 'manual' }
   }
-  if (tempC < FIXED_COLD_C) return TEMP_COLORS.cold
-  if (tempC < FIXED_WARM_C) return TEMP_COLORS.ok
-  if (tempC < FIXED_HOT_C) return TEMP_COLORS.warm
+  if (optimalC && optimalC > 0) {
+    return { coldBelowC: optimalC - TEMP_OK_BAND_C, hotAboveC: optimalC + TEMP_OK_BAND_C, overheatAboveC: optimalC + TEMP_HOT_BAND_C, source: 'lmu' }
+  }
+  return { coldBelowC: FIXED_COLD_C, hotAboveC: FIXED_WARM_C, overheatAboveC: FIXED_HOT_C, source: 'fixed' }
+}
+
+/** Colour for a tyre surface temperature in its window. No colour without data. */
+export function tyreTempColor(tempC: number, w: TyreWindow): string {
+  // 0 or less: no reading (LMU sends 0 K, -273 °C, for a car it does not detail).
+  if (tempC <= 0) return TEMP_COLORS.none
+  if (tempC < w.coldBelowC) return TEMP_COLORS.cold
+  if (tempC <= w.hotAboveC) return TEMP_COLORS.ok
+  if (tempC <= w.overheatAboveC) return TEMP_COLORS.warm
   return TEMP_COLORS.hot
 }
 
@@ -66,7 +87,7 @@ export function flatSpotLikely(t: TireData): boolean {
  * The one thing most worth saying about a tyre, most serious first:
  * failures, then damage from lock-ups, then wear, then temperature.
  */
-export function tyreStatus(t: TireData): TyreStatus {
+export function tyreStatus(t: TireData, w: TyreWindow = tyreWindow(t.optimal_temp)): TyreStatus {
   const none: TyreStatus = { label: '', severity: 'ok', detail: '' }
   const hasData = t.carcass_temp !== 0 || t.pressure !== 0 || t.brake_temp !== 0
   if (!hasData && !t.flat && !t.detached) return none
@@ -96,19 +117,18 @@ export function tyreStatus(t: TireData): TyreStatus {
   }
 
   const surface = (t.temp_inner + t.temp_mid + t.temp_outer) / 3
-  const opt = t.optimal_temp
-  if (surface > 0 && opt && opt > 0) {
-    const d = surface - opt
-    const ref = `Surface ${surface.toFixed(0)} °C, optimal ${opt.toFixed(0)} °C.`
-    if (d > TEMP_HOT_BAND_C) return { label: 'OVERHEAT', severity: 'danger', detail: ref }
-    if (d > TEMP_OK_BAND_C) return { label: 'HOT', severity: 'warn', detail: ref }
-    if (d < -TEMP_OK_BAND_C) return { label: 'COLD', severity: 'info', detail: ref }
+  const windowText = `${w.coldBelowC.toFixed(0)}–${w.hotAboveC.toFixed(0)} °C (${w.source === 'manual' ? 'set by hand' : w.source === 'lmu' ? `around LMU's optimal ${(t.optimal_temp ?? 0).toFixed(0)} °C` : 'default'})`
+  if (surface > 0) {
+    const ref = `Surface ${surface.toFixed(0)} °C, window ${windowText}.`
+    if (surface > w.overheatAboveC) return { label: 'OVERHEAT', severity: 'danger', detail: ref }
+    if (surface > w.hotAboveC) return { label: 'HOT', severity: 'warn', detail: ref }
+    if (surface < w.coldBelowC) return { label: 'COLD', severity: 'info', detail: ref }
   }
 
   if (lockups > 0) {
     return { label: `LOCK ×${lockups}`, severity: 'info', detail: `${lockDetail} Too short to suggest a flat spot.` }
   }
-  return { label: 'OK', severity: 'ok', detail: opt ? `In the window around ${opt.toFixed(0)} °C.` : 'Nothing to report.' }
+  return { label: 'OK', severity: 'ok', detail: surface > 0 ? `In the window ${windowText}.` : 'Nothing to report.' }
 }
 
 const POSITIONS = ['FL', 'FR', 'RL', 'RR'] as const
