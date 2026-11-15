@@ -351,6 +351,13 @@ import type { RaceTiming } from './race'
 import type { AiFeed } from './ai'
 import type { HistoryMessage } from './history'
 
+/** The track outline stored on the bridge, as JSON text (see utils/trackOutline). */
+export interface TrackOutlineMsg {
+  type: 'TrackOutline'
+  track: string
+  json: string | null
+}
+
 export type ServerMessage =
   | TelemetryUpdate
   | ScoringUpdate
@@ -369,3 +376,4 @@ export type ServerMessage =
   | RaceTiming
   | AiFeed
   | HistoryMessage
+  | TrackOutlineMsg

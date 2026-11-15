@@ -344,6 +344,28 @@ function migrate(raw: unknown): TrackOutline | null {
   }
 }
 
+/** A record as JSON text (from the bridge), or null if unusable. */
+export function parseOutline(json: string | null): TrackOutline | null {
+  if (!json) return null
+  try { return migrate(JSON.parse(json)) } catch { return null }
+}
+
+/**
+ * Whether `next` should replace `current`: same rule as the bridge's store
+ * (bridge/src/track_store.rs) — complete, and newer or with the sector lines
+ * the current one lacks.
+ */
+export function isBetterOutline(next: TrackOutline | null, current: TrackOutline | null): boolean {
+  if (!next?.complete) return false
+  if (!current?.complete) return true
+  if (next.version !== current.version) return next.version > current.version
+  return hasSectors(next) && !hasSectors(current)
+}
+
+function hasSectors(o: TrackOutline): boolean {
+  return o.sector1Dist > 0 && o.sector2Dist > o.sector1Dist
+}
+
 export function loadOutline(name: string): TrackOutline | null {
   try {
     const raw = localStorage.getItem(storedKey(name))

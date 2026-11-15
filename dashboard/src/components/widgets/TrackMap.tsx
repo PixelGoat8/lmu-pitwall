@@ -13,22 +13,27 @@
  * **The outline is recorded once and kept.** See `utils/trackOutline.ts`. An
  * outline stored by an older version stays on screen and is quietly replaced by
  * a fuller record on the next clean lap — nothing has to be re-recorded by hand.
+ * Every car on track is recorded at once, and the first clean lap of any of
+ * them makes the map. The result is stored in the browser and on the bridge
+ * (or hub), so every other dashboard gets it without a lap of its own.
  */
 
 import { useRef, useMemo, useEffect, useState, useCallback } from 'react'
 import { useTelemetryStore } from '../../stores/telemetryStore'
+import { sendBridgeCommand } from '../../hooks/useWebSocket'
 import { classNeighbours } from '../../utils/gaps'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { colors, fonts } from '../../styles/theme'
 import { CLASS_COLORS, getClassColor } from '../../utils/classColors'
 import {
-  OUTLINE_VERSION, SVG_SIZE, FALLBACK_BOUNDS,
+  SVG_SIZE, FALLBACK_BOUNDS,
   calcBounds, unionBounds, boundsEqual, worldToSvg, toPolyline, crossMark,
   splitSectors, indexAtDistance, computeStats, elevationPath, hasDetail,
-  loadOutline, saveOutline,
+  loadOutline, saveOutline, parseOutline, isBetterOutline,
   type Bounds, type TrackOutline, type TrackPoint,
 } from '../../utils/trackOutline'
 import { newTrail, pushSample, renderDelay, sampleAt, type Trail } from '../../utils/motionTrail'
+import { type Build, freshBuild, stepBuild, needsRecording, hasSectorLines } from '../../utils/trackRecorder'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -44,12 +49,6 @@ const TRACK_FILL = '#2d2d2d'
 
 /** How often the outline recorder samples the player's position. */
 const RECORD_INTERVAL_MS = 50
-/** Points closer together than this (m) are dropped — 5 m is plenty of detail. */
-const MIN_POINT_SPACING = 5
-/** A step longer than this (m) is a respawn or a teleport, not driving. */
-const MAX_POINT_STEP = 50
-/** Fewer points than this is not a lap worth keeping. */
-const MIN_LAP_POINTS = 50
 /** Refit the view and redraw the lap being recorded on this interval, rather
  *  than on every update — bounds that move at 20 Hz make the map shimmer. */
 const REFIT_MS = 400
@@ -60,49 +59,6 @@ const ELEV_STRIP_H = 46
 // Recording
 // ---------------------------------------------------------------------------
 
-interface Build {
-  trackName: string
-  points: TrackPoint[]
-  /** S/F crossings seen: 0 = outlap in progress, 1 = recording a lap. */
-  crossings: number
-  sector1Dist: number
-  sector2Dist: number
-  prevDist: number
-  prevCurS1: number
-  prevCurS2: number
-  last: TrackPoint | null
-}
-
-/**
- * Starting value for the previous sector times.
- *
- * The sector lines are found by watching a sector time go from "none" to a
- * value. Crossing S/F clears those times, but scoring only refreshes at 5 Hz,
- * so for a moment after the line the *previous* lap's times are still being
- * reported. Starting from a positive value means the watch cannot fire on that
- * stale reading — it arms itself only after seeing the times actually clear.
- */
-const NOT_YET_CLEARED = Infinity
-
-function freshBuild(trackName: string): Build {
-  const build = {
-    trackName, points: [], crossings: 0,
-    sector1Dist: -1, sector2Dist: -1,
-    prevDist: 0, prevCurS1: NOT_YET_CLEARED, prevCurS2: NOT_YET_CLEARED, last: null,
-  }
-  return build
-}
-
-/** Begin a recording lap. The car is at the line when this is called. */
-function restartLap(build: Build): void {
-  build.points = []
-  build.last = null
-  build.crossings = 1
-  build.sector1Dist = -1
-  build.sector2Dist = -1
-  build.prevCurS1 = NOT_YET_CLEARED
-  build.prevCurS2 = NOT_YET_CLEARED
-}
 
 // ---------------------------------------------------------------------------
 // Formatting
@@ -174,7 +130,10 @@ export default function TrackMap() {
   /** The lap being recorded, already projected. Written by the refit timer. */
   const [trailLine, setTrailLine] = useState('')
 
-  const buildRef = useRef<Build | null>(null)
+  /** One lap in progress per car; null once the outline is done. */
+  const buildsRef = useRef<Map<number, Build> | null>(null)
+  /** The live copy of `outline`, for the recorder and the bridge replies. */
+  const outlineRef = useRef<TrackOutline | null>(null)
   const loadedTrackRef = useRef('')
   /** False until the view has been fitted to something real, so the placeholder
    *  bounds never end up merged into a track's own extent. */
@@ -209,6 +168,7 @@ export default function TrackMap() {
 
     const saved = loadOutline(trackName)
     fittedRef.current = false
+    outlineRef.current = saved
     setOutline(saved)
     setTrailLine('')
     setRecord('idle')
@@ -216,100 +176,88 @@ export default function TrackMap() {
     // Record when there is nothing stored, and re-record when what is stored
     // predates the elevation and sector data. The old outline keeps drawing
     // until the new one is finished.
-    buildRef.current = (!saved || !saved.complete || saved.version < OUTLINE_VERSION)
-      ? freshBuild(trackName)
-      : null
+    buildsRef.current = needsRecording(saved) ? new Map() : null
+    // The bridge may already have one, recorded by another dashboard.
+    sendBridgeCommand({ command: 'track_outline_get', track: trackName })
   }, [trackName, setRecord])
 
+  /** Show and keep an outline: in this browser, and on the bridge if it came
+   *  from here. A complete one with its sector lines stops the recording. */
+  const adoptOutline = useCallback((o: TrackOutline, upload: boolean) => {
+    outlineRef.current = o
+    setOutline(o)
+    saveOutline(o)
+    if (upload) sendBridgeCommand({ command: 'track_outline_save', track: o.trackName, json: JSON.stringify(o) })
+    if (!needsRecording(o) && hasSectorLines(o)) {
+      buildsRef.current = null
+      setRecord('idle')
+    }
+  }, [setRecord])
+
   // --------------------------------------------------------------------------
-  // Sample the player's line into an outline
+  // The bridge's stored outline: take it if it is better than ours, give it
+  // ours if ours is better. Asked again on every reconnect.
+  // --------------------------------------------------------------------------
+  useEffect(() => {
+    const unsubReply = useTelemetryStore.subscribe((state, prev) => {
+      const reply = state.trackOutline
+      if (!reply || reply === prev.trackOutline || reply.track !== loadedTrackRef.current) return
+      const theirs = parseOutline(reply.json)
+      const ours = outlineRef.current
+      if (theirs && theirs.trackName === reply.track && isBetterOutline(theirs, ours)) {
+        adoptOutline(theirs, false)
+      } else if (ours && isBetterOutline(ours, theirs)) {
+        sendBridgeCommand({ command: 'track_outline_save', track: ours.trackName, json: JSON.stringify(ours) })
+      }
+    })
+    const unsubConn = useTelemetryStore.subscribe((state, prev) => {
+      if (state.connection.status === 'connected' && prev.connection.status !== 'connected' && loadedTrackRef.current) {
+        sendBridgeCommand({ command: 'track_outline_get', track: loadedTrackRef.current })
+      }
+    })
+    return () => { unsubReply(); unsubConn() }
+  }, [adoptOutline])
+
+  // --------------------------------------------------------------------------
+  // Sample every car's line into an outline: the first clean lap of any of
+  // them makes the map, so it does not wait for ours or for our pit stops.
   // --------------------------------------------------------------------------
   useEffect(() => {
     const id = setInterval(() => {
-      const build = buildRef.current
-      if (!build) return
+      const builds = buildsRef.current
+      if (!builds) return
 
       const { scoring, session } = useTelemetryStore.getState()
       const length = session.track_length
-      if (length <= 0) return
-      const player = scoring.vehicles.find((v) => v.id === scoring.player_vehicle_id)
-      if (!player || (player.pos_x === 0 && player.pos_z === 0)) return
+      const trackName = loadedTrackRef.current
+      if (length <= 0 || !trackName) return
 
-      const dist = player.lap_dist
-      const prev = build.prevDist
-      build.prevDist = dist
-
-      // S/F crossing: lap distance falls from near a full lap back to near zero.
-      if (prev > length * 0.7 && dist < length * 0.1) {
-        if (build.crossings >= 1 && build.points.length > MIN_LAP_POINTS) {
-          const done: TrackOutline = {
-            version: OUTLINE_VERSION,
-            trackName: build.trackName,
-            points: build.points,
-            bounds: calcBounds(build.points),
-            complete: true,
-            sector1Dist: build.sector1Dist,
-            sector2Dist: build.sector2Dist,
-          }
-          setOutline(done)
-          saveOutline(done)
-          setRecord('idle')
-
-          // A lap whose sector lines were never seen still makes a perfectly
-          // good map, so it is kept and drawn. Recording just carries on into
-          // the next lap to try for them again — invisibly, because a finished
-          // outline is what gets drawn from here on.
-          if (done.sector1Dist > 0 && done.sector2Dist > done.sector1Dist) {
-            buildRef.current = null
-          } else {
-            restartLap(build)
-          }
-          return
+      let recording = false
+      const present = new Set<number>()
+      for (const car of scoring.vehicles) {
+        if (car.pos_x === 0 && car.pos_z === 0) continue
+        present.add(car.id)
+        let build = builds.get(car.id)
+        if (!build) {
+          build = freshBuild(trackName)
+          build.prevDist = car.lap_dist
+          builds.set(car.id, build)
         }
-        // Either the outlap just ended or the lap was unusable. The car is at
-        // the line either way, so a fresh recording lap starts here.
-        restartLap(build)
-        setTrailLine('')
-        setRecord('recording')
-        return
+        const done = stepBuild(build, car, length)
+        if (done && isBetterOutline(done, outlineRef.current)) {
+          adoptOutline(done, true)
+          if (!buildsRef.current) return
+        }
+        if (build.crossings >= 1 && !build.broken) recording = true
       }
-
-      if (build.crossings < 1) {
-        setRecord('outlap')
-        return
-      }
-
-      // The pit lane is not the track. A lap that visits it is abandoned, and
-      // the next S/F crossing starts a new attempt.
-      if (player.in_pits) {
-        buildRef.current = freshBuild(build.trackName)
-        setTrailLine('')
-        setRecord('outlap')
-        return
-      }
-
-      // Sector lines, caught the moment the game starts reporting a time for
-      // the sector just left. That lands within one scoring tick of the real
-      // line, which at map scale is well under a pixel.
-      if (build.sector1Dist < 0 && build.prevCurS1 <= 0 && player.cur_sector1 > 0) build.sector1Dist = dist
-      if (build.sector2Dist < 0 && build.prevCurS2 <= 0 && player.cur_sector2 > 0) build.sector2Dist = dist
-      build.prevCurS1 = player.cur_sector1
-      build.prevCurS2 = player.cur_sector2
-
-      const last = build.last
-      if (last) {
-        const step = Math.hypot(player.pos_x - last.x, player.pos_z - last.z)
-        if (step < MIN_POINT_SPACING) return
-        if (step > MAX_POINT_STEP) return  // off-track, respawn or teleport
-      }
-
-      const pt: TrackPoint = { x: player.pos_x, y: player.pos_y, z: player.pos_z, d: dist }
-      build.points.push(pt)
-      build.last = pt
+      for (const id of builds.keys()) if (!present.has(id)) builds.delete(id)
+      // With an outline already on screen the rest is a quiet retry for the
+      // sector lines: nothing to announce.
+      setRecord(outlineRef.current?.complete ? 'idle' : recording ? 'recording' : 'outlap')
     }, RECORD_INTERVAL_MS)
 
     return () => clearInterval(id)
-  }, [setRecord])  // reads the store imperatively, so it never needs re-creating
+  }, [setRecord, adoptOutline])  // reads the store imperatively
 
   // --------------------------------------------------------------------------
   // Fit the view
@@ -327,7 +275,11 @@ export default function TrackMap() {
     }
 
     const fit = () => {
-      const pts = buildRef.current?.points ?? []
+      // The lap in progress furthest along, of any car.
+      let pts: TrackPoint[] = []
+      for (const b of buildsRef.current?.values() ?? []) {
+        if (b.crossings >= 1 && !b.broken && b.points.length > pts.length) pts = b.points
+      }
       const cars = useTelemetryStore.getState().scoring.vehicles
         .filter((v) => v.pos_x !== 0 || v.pos_z !== 0)
         .map((v) => ({ x: v.pos_x, z: v.pos_z }))
@@ -423,7 +375,10 @@ export default function TrackMap() {
   }, [outline, bounds])
 
   const plainLine = useMemo(
-    () => (!sectorLines && outline && outline.points.length >= 2 ? toPolyline(outline.points, bounds) : ''),
+    // A complete lap closes on itself across the line.
+    () => (!sectorLines && outline && outline.points.length >= 2
+      ? toPolyline(outline.complete ? [...outline.points, outline.points[0]] : outline.points, bounds)
+      : ''),
     [sectorLines, outline, bounds],
   )
 
@@ -451,7 +406,7 @@ export default function TrackMap() {
   const rich = detail !== 'compact'
   const roadWidth = outline?.complete ? 14 : 3
   const status = recordState === 'recording' ? ' — recording…'
-    : recordState === 'outlap' ? ' — outlap…'
+    : recordState === 'outlap' ? ' — waiting for a car at the line…'
     : ''
 
   return (

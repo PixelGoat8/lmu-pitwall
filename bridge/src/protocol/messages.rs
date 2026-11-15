@@ -514,6 +514,10 @@ pub enum ServerMessage {
     HistoryStrategy { session_id: i64, lap: i64, json: Option<String> },
     HistoryError { message: String },
 
+    /// The track outline stored on this Pitwall for a track (the dashboard's
+    /// `TrackOutline` record as JSON text), `None` when there is none yet.
+    TrackOutline { track: String, json: Option<String> },
+
     // -----------------------------------------------------------------------
     // Hub mode (see `crate::hub`)
     // -----------------------------------------------------------------------
@@ -816,6 +820,12 @@ pub enum ClientCommand {
     HistoryStrategy { session_id: i64, lap: i64 },
     /// Local only.
     HistoryDelete { session_id: i64 },
+
+    /// The stored outline for a track, so every dashboard (tablet, hub, other
+    /// PC) draws the map without recording a lap of its own.
+    TrackOutlineGet { track: String },
+    /// Keep an outline a dashboard has just recorded (its JSON text).
+    TrackOutlineSave { track: String, json: String },
 
     /// Follow this car (its name as the game shows it) when the PC has no car
     /// of its own, e.g. in LMU's engineer seat. `null` stops following.

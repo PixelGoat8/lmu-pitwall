@@ -582,6 +582,9 @@ fn dispatch_command(cmd: ClientCommand) -> ServerMessage {
     if crate::history::is_history_command(&cmd) {
         return crate::history::handle_command(cmd);
     }
+    if crate::track_store::is_track_command(&cmd) {
+        return crate::track_store::handle_command(cmd);
+    }
     match cmd {
         ClientCommand::FuelCalcInit | ClientCommand::FuelCalcCompute { .. } => {
             fuel_handle(cmd)

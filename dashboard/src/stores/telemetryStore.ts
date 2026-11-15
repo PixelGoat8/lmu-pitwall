@@ -153,6 +153,8 @@ interface TelemetryStore {
   aiFeed: AiFeed | null
   // Replies to the history panel's requests.
   history: { sessions: SessionSummary[] | null; detail: SessionDetail | null; carLaps: { session_id: number; laps: CarLapRow[] } | null; error: string | null }
+  /** The bridge's latest answer about a stored track outline. */
+  trackOutline: { track: string; json: string | null; at: number } | null
   lapHistory: LapEntry[]
   weatherHistory: WeatherSnapshot[]
   _lapTracking: { prevTotalLaps: number; prevPlayerId: number }
@@ -328,6 +330,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   raceTiming: null,
   aiFeed: null,
   history: { sessions: null, detail: null, carLaps: null, error: null },
+  trackOutline: null,
   lapHistory: [],
   weatherHistory: [],
   _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
@@ -593,6 +596,10 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
 
       case 'HistoryError':
         set((st) => ({ history: { ...st.history, error: msg.message } }))
+        break
+
+      case 'TrackOutline':
+        set({ trackOutline: { track: msg.track, json: msg.json, at: Date.now() } })
         break
 
       case 'HubStatus':
