@@ -12,6 +12,7 @@ mod follow;
 mod fuel_calculator;
 mod garage_api;
 mod http_server;
+mod history;
 mod hub;
 mod idle;
 mod lap_tracker;
@@ -1539,6 +1540,8 @@ async fn main() -> Result<()> {
     tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx));
     // Race events and lap history, from the same stream.
     tokio::spawn(race::run(ws.broadcaster().subscribe(), ws.broadcaster()));
+    // Session history in SQLite, from the same stream.
+    tokio::spawn(history::run(ws.broadcaster().subscribe()));
     // AI engineer comments (off unless enabled and ANTHROPIC_API_KEY is set).
     tokio::spawn(ai::run(ws.broadcaster().subscribe(), ws.broadcaster(), ai_rx));
 

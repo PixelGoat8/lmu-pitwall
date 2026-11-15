@@ -505,6 +505,16 @@ pub enum ServerMessage {
     AiFeed(Box<crate::ai::AiFeed>),
 
     // -----------------------------------------------------------------------
+    // Session history (see `crate::history`); replies to history_* commands
+    // -----------------------------------------------------------------------
+    HistorySessions { sessions: Vec<crate::history::store::SessionSummary> },
+    HistorySession(Box<crate::history::store::SessionDetail>),
+    HistoryCarLaps { session_id: i64, laps: Vec<crate::history::store::CarLapRow> },
+    /// The strategy plan as it was at a lap (a `StrategyReport` as JSON text).
+    HistoryStrategy { session_id: i64, lap: i64, json: Option<String> },
+    HistoryError { message: String },
+
+    // -----------------------------------------------------------------------
     // Hub mode (see `crate::hub`)
     // -----------------------------------------------------------------------
     /// The bridges a hub is connected to and which one it is following.
@@ -797,6 +807,16 @@ pub enum ClientCommand {
     // -----------------------------------------------------------------------
     // Strategy
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Session history
+    // -----------------------------------------------------------------------
+    HistoryList,
+    HistorySession { session_id: i64 },
+    HistoryCarLaps { session_id: i64, car_ids: Vec<i64> },
+    HistoryStrategy { session_id: i64, lap: i64 },
+    /// Local only.
+    HistoryDelete { session_id: i64 },
+
     /// Follow this car (its name as the game shows it) when the PC has no car
     /// of its own, e.g. in LMU's engineer seat. `null` stops following.
     FollowCar {

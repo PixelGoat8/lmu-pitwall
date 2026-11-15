@@ -553,6 +553,8 @@ fn is_local_only(cmd: &ClientCommand) -> bool {
         ClientCommand::PostRaceInit { results_path } => {
             results_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false)
         }
+        // Deleting a session destroys data on this PC.
+        ClientCommand::HistoryDelete { .. } => true,
         _ => false,
     }
 }
@@ -562,6 +564,7 @@ fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
     let message = "This action is only available on the racing PC itself.".to_string();
     match cmd {
         ClientCommand::PostRaceInit { .. } => ServerMessage::PostRaceError { message },
+        ClientCommand::HistoryDelete { .. } => ServerMessage::HistoryError { message },
         _ => ServerMessage::EngineerError { message },
     }
 }
@@ -576,6 +579,9 @@ fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
 /// `post_race::api`. Both handlers are synchronous and must be called from
 /// `tokio::task::spawn_blocking`.
 fn dispatch_command(cmd: ClientCommand) -> ServerMessage {
+    if crate::history::is_history_command(&cmd) {
+        return crate::history::handle_command(cmd);
+    }
     match cmd {
         ClientCommand::FuelCalcInit | ClientCommand::FuelCalcCompute { .. } => {
             fuel_handle(cmd)
