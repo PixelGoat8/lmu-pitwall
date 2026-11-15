@@ -19,7 +19,8 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > | 6. AI engineer comments (Anthropic API) on the computed state only, numbers checked | done: [docs/ai.md](docs/ai.md) (Italian) |
 > | 7. Session history in SQLite: laps, every car's laps, stints, events, strategy, AI; History panel | done: [docs/storico.md](docs/storico.md) (Italian) |
 > | Engineer-seat fallback: follow the team car from LMU's engineer seat (timing, VE strategy, events, AI; no fuel or tyres) | done |
-> | Extra. Driver coaching: per-corner metrics, lift & coast, reference lap comparison | optional |
+> | Windows installer (firewall rule, hub icon, autostart) and a one-page guide for drivers | done: [docs/guida-pilota.md](docs/guida-pilota.md) (Italian) |
+> | Extra. Driver coaching: per-corner metrics, reference lap comparison (lift & coast is already in the strategy) | optional |
 
 ## Hub: one dashboard for a team of drivers
 
@@ -91,13 +92,26 @@ protocol: [shared/protocol.md](shared/protocol.md).
 
 ## Install
 
-Download `LMU-Pitwall-Setup-X.X.X.exe` from the [latest release](https://github.com/Swizzjack/lmu-pitwall/releases), run the installer, start Le Mans Ultimate, then open the dashboard in any browser:
+Run `LMU-Pitwall-Setup-X.X.X.exe` (built with `installer\build.ps1`, below),
+start Le Mans Ultimate, then open the dashboard in any browser:
 
 ```
 http://<racing-pc-ip>:9000
 ```
 
-No configuration required. A portable `lmu-pitwall.exe` (no installer) is also on the releases page.
+The installer asks for administrator rights once, to add a firewall rule that
+lets in only Tailscale (100.64.0.0/10) and the local network. Its options:
+
+| Option | Default | For |
+|---|---|---|
+| LMU Pitwall icon on the desktop | on | everyone |
+| "Pitwall Hub" icon (`--hub`) | off | the engineer following the team |
+| Firewall rule | on | everyone |
+| Start with Windows (`--no-browser --keep-alive`) | off | drivers who would rather not remember |
+
+A newer installer upgrades in place and keeps the settings
+(`%APPDATA%\LMUPitwall`). The one-page guide for drivers, in Italian, is
+[docs/guida-pilota.md](docs/guida-pilota.md).
 
 ## Shared Memory (no plugin required)
 
@@ -244,6 +258,18 @@ cd bridge; cargo test; cargo build --release
 Build the dashboard first: the bridge embeds `dashboard/dist` at compile time.
 Without Zig the icon embedding step is skipped with a warning; the binary
 works, it just has no icon.
+
+**Installer on Windows:** with [Inno Setup 6](https://jrsoftware.org/isdl.php)
+(`winget install JRSoftware.InnoSetup`), one command builds the dashboard, the
+bridge and the installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File installer\build.ps1
+# -> installer\Output\LMU-Pitwall-Setup-<version>.exe
+```
+
+The version comes from `bridge/Cargo.toml`. `release.sh` builds the same
+installer through Wine.
 
 ## Tech Stack
 

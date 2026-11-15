@@ -62,9 +62,14 @@ mkdir -p "$DIST_DIR/installer"
 cp "$BRIDGE_DIR/target/$TARGET/release/lmu-pitwall.exe" "$DIST_DIR/"
 cp installer/lmu-pitwall-installer.iss "$DIST_DIR/installer/"
 cp "$DIST_DIR/lmu-pitwall.exe"         "$DIST_DIR/installer/"
+cp LICENSE                             "$DIST_DIR/installer/"
+cp "$BRIDGE_DIR/assets/icon.ico"       "$DIST_DIR/installer/"
+# The script's default sources are the Windows build tree; here everything
+# sits next to it, and the installer goes beside it too.
+ISS_DEFINES=(/DExeSource=lmu-pitwall.exe /DLicenseSource=LICENSE /DIconSource=icon.ico /O.)
 
 # build-installer.bat (Windows line endings)
-printf '@echo off\r\necho Building LMU Pitwall Installer...\r\necho.\r\n"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" "%%~dp0installer\\lmu-pitwall-installer.iss"\r\nif errorlevel 1 (\r\n    echo.\r\n    echo ERROR: Inno Setup not found.\r\n    echo Please install Inno Setup 6 from: https://jrsoftware.org/isdl.php\r\n    pause\r\n    exit /b 1\r\n)\r\necho.\r\necho Done! Installer created: installer\\LMU-Pitwall-Setup-%s.exe\r\necho.\r\npause\r\n' \
+printf '@echo off\r\necho Building LMU Pitwall Installer...\r\necho.\r\ncd /d "%%~dp0installer"\r\n"C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" /DExeSource=lmu-pitwall.exe /DLicenseSource=LICENSE /DIconSource=icon.ico /O. lmu-pitwall-installer.iss\r\nif errorlevel 1 (\r\n    echo.\r\n    echo ERROR: Inno Setup not found.\r\n    echo Please install Inno Setup 6 from: https://jrsoftware.org/isdl.php\r\n    pause\r\n    exit /b 1\r\n)\r\necho.\r\necho Done! Installer created: installer\\LMU-Pitwall-Setup-%s.exe\r\necho.\r\npause\r\n' \
   "$VER" > "$DIST_DIR/build-installer.bat"
 
 # ── 5. Build Inno Setup installer (.exe) via Wine ──────────────────────────
@@ -82,7 +87,7 @@ if $INSTALLER; then
     INSTALLER=false
   else
     ( cd "$DIST_DIR/installer" && \
-      WINEDEBUG=-all wine "$ISCC_WINE" "lmu-pitwall-installer.iss" )
+      WINEDEBUG=-all wine "$ISCC_WINE" "${ISS_DEFINES[@]}" "lmu-pitwall-installer.iss" )
     SETUP_EXE="$DIST_DIR/installer/LMU-Pitwall-Setup-${VER}.exe"
     echo "  Installer created: installer/LMU-Pitwall-Setup-${VER}.exe"
   fi

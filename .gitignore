@@ -57,3 +57,6 @@ AGENTS.md
 
 # Recorded or generated sessions (see bridge --record / tools/mock-session)
 *.pwrec
+
+# Installer output (installer/build.ps1)
+installer/Output/
