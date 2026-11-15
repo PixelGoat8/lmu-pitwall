@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { isTouchDevice } from '../utils/device'
 import { persist } from 'zustand/middleware'
 import type { ResponsiveLayouts } from 'react-grid-layout'
 
@@ -115,6 +116,32 @@ const ENDURANCE_LG = [
   { i: 'strategy-1',   x: 0,  y: 12, w: 12, h: 8, minW: 4, minH: 4 },
 ]
 
+// Engineer: for the engineer's tablet — no driver gauges, the race instead.
+// Laid out for a 12-column landscape tablet; narrower screens reflow it.
+const ENGINEER_WIDGETS: WidgetConfig[] = [
+  { id: 'gaps-1',       widgetType: 'GapWidget' },
+  { id: 'traffic-1',    widgetType: 'TrafficWidget' },
+  { id: 'fuel-1',       widgetType: 'FuelManager' },
+  { id: 'tire-1',       widgetType: 'TireMonitor' },
+  { id: 'strategy-1',   widgetType: 'StrategyWidget' },
+  { id: 'rivals-1',     widgetType: 'RivalsWidget' },
+  { id: 'events-1',     widgetType: 'EventsWidget' },
+  { id: 'map-1',        widgetType: 'TrackMap' },
+  { id: 'standings-1',  widgetType: 'Standings' },
+]
+
+const ENGINEER_LG = [
+  { i: 'gaps-1',       x: 0, y: 0,  w: 4, h: 3, minW: 3, minH: 2 },
+  { i: 'traffic-1',    x: 4, y: 0,  w: 4, h: 3, minW: 3, minH: 3 },
+  { i: 'fuel-1',       x: 8, y: 0,  w: 2, h: 3, minW: 2, minH: 3 },
+  { i: 'tire-1',       x: 10, y: 0, w: 2, h: 3, minW: 2, minH: 3 },
+  { i: 'strategy-1',   x: 0, y: 3,  w: 7, h: 9, minW: 4, minH: 4 },
+  { i: 'rivals-1',     x: 7, y: 3,  w: 5, h: 5, minW: 4, minH: 3 },
+  { i: 'events-1',     x: 7, y: 8,  w: 5, h: 4, minW: 3, minH: 3 },
+  { i: 'map-1',        x: 0, y: 12, w: 5, h: 5, minW: 3, minH: 3 },
+  { i: 'standings-1',  x: 5, y: 12, w: 7, h: 5, minW: 4, minH: 3 },
+]
+
 // Stream: minimal — Gear, Speed, RPM, Lap for overlay/stream use
 const STREAM_WIDGETS: WidgetConfig[] = [
   { id: 'gear-1',  widgetType: 'GearIndicator' },
@@ -150,6 +177,11 @@ export const LAYOUT_PRESETS: Record<string, LayoutPreset> = {
     name: 'Compact',
     widgets: COMPACT_WIDGETS,
     layouts: { lg: COMPACT_LG },
+  },
+  Engineer: {
+    name: 'Engineer',
+    widgets: ENGINEER_WIDGETS,
+    layouts: { lg: ENGINEER_LG },
   },
   Stream: {
     name: 'Stream',
@@ -194,7 +226,8 @@ export const useLayoutStore = create<LayoutStore>()(
       presetScales: {},
       presetLayouts: {},
       presetWidgets: {},
-      locked: false,
+      // On a touch screen a stray swipe would drag widgets around: start locked.
+      locked: isTouchDevice(),
 
       setLayouts: (layouts) => set({ layouts }),
 

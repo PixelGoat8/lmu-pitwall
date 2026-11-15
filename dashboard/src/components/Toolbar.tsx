@@ -5,6 +5,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { WIDGET_REGISTRY } from './widgetRegistry'
 import { colors, fonts } from '../styles/theme'
 import { bridgeApiUrl } from '../utils/bridge'
+import { isFullscreen, keepAwakeActive, setKeepAwake, toggleFullscreen as toggleFs } from '../utils/device'
 
 interface NetworkInfo {
   ip: string
@@ -265,20 +266,33 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
   const { activePreset, locked, setPreset, resetToDefault, toggleLock, addWidget } = useLayoutStore()
   const fullscreen = useSettingsStore((s) => s.fullscreen)
 
-  const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {})
-    } else {
-      document.exitFullscreen().catch(() => {})
+  const toggleFullscreen = useCallback(() => toggleFs(), [])
+  const [fsOn, setFsOn] = useState(isFullscreen())
+  useEffect(() => {
+    const update = () => setFsOn(isFullscreen())
+    document.addEventListener('fullscreenchange', update)
+    document.addEventListener('webkitfullscreenchange', update)
+    return () => {
+      document.removeEventListener('fullscreenchange', update)
+      document.removeEventListener('webkitfullscreenchange', update)
     }
+  }, [])
+  const [awake, setAwake] = useState(keepAwakeActive())
+  const toggleAwake = useCallback(() => {
+    setKeepAwake(!keepAwakeActive()).then(setAwake)
   }, [])
 
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
+      flexWrap: 'wrap',
       gap: 10,
+      rowGap: 6,
       padding: '7px 14px',
+      paddingTop: 'max(7px, env(safe-area-inset-top))',
+      paddingLeft: 'max(14px, env(safe-area-inset-left))',
+      paddingRight: 'max(14px, env(safe-area-inset-right))',
       background: colors.bgCard,
       borderBottom: `1px solid ${colors.border}`,
       flexShrink: 0,
@@ -372,7 +386,10 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
       </ToolbarBtn>
 
       {/* Fullscreen */}
-      <ToolbarBtn onClick={toggleFullscreen} title="Toggle fullscreen (F11)" active={fullscreen}>⛶</ToolbarBtn>
+      <ToolbarBtn onClick={toggleFullscreen} title="Toggle fullscreen (F11)" active={fullscreen || fsOn}>⛶</ToolbarBtn>
+
+      {/* Keep the tablet's screen on during a race */}
+      <ToolbarBtn onClick={toggleAwake} title={awake ? 'Screen kept on — tap to allow sleep' : 'Keep the screen on'} active={awake}>☀</ToolbarBtn>
 
       {/* Settings */}
       <ToolbarBtn onClick={onOpenSettings} title="Settings">⚙</ToolbarBtn>
