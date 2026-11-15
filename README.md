@@ -15,8 +15,8 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > | 2. Remote access: token, reconnects, no shutdown mid-race | done: [docs/accesso-remoto.md](docs/accesso-remoto.md) (Italian) |
 > | 3. Multi-driver hub, stint history, record/replay; class gaps, tyre status, fuel calculator auto-select | done: [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md) (Italian) |
 > | 4. Live strategy engine: consumption, stops, pit window, "box in N laps", tyres, pit lane loss, weather | done: [docs/strategia.md](docs/strategia.md) (Italian) |
-> | 5. Timing and race events (rivals, faster cars and blue flags, FCY/SC/penalties log), touch layout and installable PWA for tablets | next |
-> | 6. AI engineer comments (Anthropic API) on the computed state only | planned |
+> | 5. Timing and race events (rivals lap by lap, multiclass traffic and blue flags, race log), touch layout and installable web app for tablets | done: [docs/tablet.md](docs/tablet.md) (Italian) |
+> | 6. AI engineer comments (Anthropic API) on the computed state only, numbers checked | done: [docs/ai.md](docs/ai.md) (Italian) |
 > | 7. Session history in SQLite for post-race analysis and stint comparison | planned |
 > | Extra. Driver coaching: per-corner metrics, lift & coast, reference lap comparison | optional |
 
@@ -35,6 +35,14 @@ driver swap, and keeps the stint history across swaps: driver, duration, laps,
 best and average lap, fuel and virtual energy per lap. A bridge can be pinned
 when the automatic choice is not what you want. Details and current limits:
 [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md).
+
+## Tablet
+
+Add the dashboard to the home screen (Android: Chrome menu → *Add to Home
+screen*; iPad: Share → *Add to Home Screen*), pick the **Engineer** preset and
+tap ☀ to keep the screen on. Touch screens start with the layout locked;
+portrait layouts are derived from the landscape one. Details:
+[docs/tablet.md](docs/tablet.md).
 
 ## Record and replay
 
@@ -114,6 +122,10 @@ The dashboard auto-connects and updates in real time. On first run, Windows Fire
 | **Tires** | Temperatures (inner/middle/outer/carcass), pressures, wear %, and brake disc temps per corner. A status chip per tyre says the one thing that matters: puncture, wheel off, locked, flat-spot risk (inferred from lock-ups, since LMU reports no flat spots), worn, cold or hot relative to the compound's optimal temperature |
 | **Gaps (class)** | Gap to the cars one place ahead and behind in your class, and whether each is closing or growing lap over lap |
 | **Team & Stints** | Hub mode only: the drivers' PCs, who is on screen, and the stint history |
+| **Traffic** | Faster classes closing from behind and slower ones ahead to lap, with seconds until they meet; blue flag banner |
+| **Rivals** | Our recent laps next to the class rivals ahead and behind and the class leader, lap by lap |
+| **Race events** | Full course yellow, pit lane open/closed, pit stops in our class, penalties, driver changes, position changes, impacts, best laps |
+| **AI engineer** | Short comments from Claude for the engineer, from the computed state only; any comment with a number not in the data is withheld. Off by default, with a daily budget. See [docs/ai.md](docs/ai.md) |
 | **Race Engineer** | Spoken callouts during practice, qualifying, and race: tire wear warnings, weather escalations, pace deltas, fuel status, flag alerts |
 | **Strategy** | Live plan recomputed every lap: fuel and virtual energy use (median, trend), laps to go, energy to the finish, stops and pit window, a "box in N laps" table with amounts and stop time from the game's own pit times, tyre wear and pace trend with the new-tyres trade-off, pit lane loss measured per track, rain outlook from the forecast. Works on a hub across driver swaps. Plus the Fuel Calculator for pre-race planning, preselecting the track and car of the session in progress |
 | **Track Map** | Live positions of the whole field, drawn smoothly at your display's refresh rate, on an outline recorded from one clean lap. Sector segments with start/finish and sector lines, local yellows on the sector they apply to, track and sector lengths, elevation range, climb per lap and an elevation profile |

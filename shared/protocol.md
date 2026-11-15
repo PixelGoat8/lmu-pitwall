@@ -235,3 +235,32 @@ computed are `null`; `notes` says why.
 
 Replaces the settings; the engine answers with a `StrategyUpdate` to every
 client. Allowed from remote clients.
+
+## Additions in this fork's phases 5 and 6
+
+### `VehicleScoring.num_penalties`
+
+i32: penalties still to serve (`mNumPenalties`).
+
+### `RaceTiming` (on change, at most 1/s, and every 5 s)
+
+Built from the stream by the bridge or hub the client is connected to.
+
+| Field | Notes |
+|---|---|
+| `events[]` | `t` (session s), `lap` (laps completed by our car), `kind` (`fcy`, `fcy_end`, `pits`, `start`, `finish`, `pit_in`, `pit_out`, `penalty`, `driver`, `position`, `impact`, `blue_flag`, `best_lap`, `class_best`), `severity` (`info`, `warn`, `alert`), `car_id`, `own`, `text`. Last 300 |
+| `laps[]` | `id`, `laps[]` of `{lap, time, pit}`: the last 20 laps of every car |
+
+### `AiFeed` (on change and every 10 s)
+
+`status`: `enabled`, `key_present`, `busy`, `calls_today`, `cost_today_usd`,
+`calls_last_hour`, `blocked` (why no comment is coming), `last_error`,
+`config`. `comments[]` (last 30, newest last): `id`, `session_time`, `lap`,
+`trigger`, `question`, `text` (empty when withheld or refused), `unverified`
+(numbers not in the snapshot), `withheld`, `refused`, `model`, `usage`,
+`cost_usd`, `latency_ms`.
+
+### Commands
+
+- `{"command":"ai_config","config":{"enabled":true,"model":"claude-opus-5-5","effort":"low","every_laps":2,"on_events":true,"min_interval_s":60,"max_calls_per_hour":40,"daily_budget_usd":3,"language":"Italian","show_unverified":false}}`
+- `{"command":"ai_ask","question":"…"}`: a comment now; `question` may be null.
