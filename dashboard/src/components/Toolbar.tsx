@@ -243,8 +243,12 @@ function HubBadge() {
     : status.sources.length ? 'nobody connected' : 'no drivers added'
   return (
     <button
-      onClick={() => { if (!hasPanel) addWidget('TeamWidget', registrySize('TeamWidget')) }}
-      title={`${status.follow ? 'Hub pinned to this PC' : 'Hub following whoever is driving'}${hasPanel ? '' : ' — click to add the Team panel'}`}
+      onClick={() => {
+        if (!hasPanel) addWidget('TeamWidget', registrySize('TeamWidget'))
+        // New widgets land at the bottom of the grid: bring the panel into view.
+        setTimeout(() => document.getElementById('hub-team-panel')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 150)
+      }}
+      title={`${status.follow ? 'Hub pinned to this PC' : 'Hub following whoever is driving'} — click to show the Team panel`}
       style={{
         fontFamily: fonts.body,
         fontSize: 15,
@@ -252,7 +256,7 @@ function HubBadge() {
         borderRadius: 3,
         whiteSpace: 'nowrap',
         background: 'transparent',
-        cursor: hasPanel ? 'default' : 'pointer',
+        cursor: 'pointer',
         color: active?.driving ? colors.primary : colors.textMuted,
         border: `1px solid ${active?.driving ? colors.primary : colors.border}`,
       }}
@@ -273,6 +277,7 @@ function ConnectionBadge() {
   const status = useTelemetryStore((s) => s.connection.status)
   const gameConnected = useTelemetryStore((s) => s.connection.game_connected)
   const sessionActive = useTelemetryStore((s) => s.connection.session_active)
+  const isHub = useTelemetryStore((s) => s.hub.status !== null)
 
   const dotColor =
     status === 'connected' ? colors.success
@@ -282,7 +287,7 @@ function ConnectionBadge() {
   const label =
     status === 'connected' && gameConnected && sessionActive ? 'Live'
     : status === 'connected' && gameConnected ? 'Menu'
-    : status === 'connected' ? 'Bridge'
+    : status === 'connected' ? (isHub ? 'Hub' : 'Bridge')
     : status === 'reconnecting' ? '…'
     : status === 'unauthorized' ? 'Token?'
     : 'Off'

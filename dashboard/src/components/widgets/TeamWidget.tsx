@@ -72,7 +72,7 @@ export default function TeamWidget() {
   }
 
   return (
-    <div style={frame}>
+    <div id="hub-team-panel" style={frame}>
       {/* Follow mode */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={sectionTitle}>Following</span>
