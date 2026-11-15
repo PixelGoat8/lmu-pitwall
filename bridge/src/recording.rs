@@ -73,7 +73,7 @@ pub async fn record(path: std::path::PathBuf, mut rx: broadcast::Receiver<Arc<Se
             Ok(msg) => {
                 // Derived from the rest of the stream: a replay recomputes it,
                 // with whatever version of the engine is running then.
-                if matches!(&*msg, ServerMessage::StrategyUpdate(_)) {
+                if matches!(&*msg, ServerMessage::StrategyUpdate(_) | ServerMessage::RaceTiming(_)) {
                     continue;
                 }
                 let Ok(bytes) = rmp_serde::to_vec_named(&*msg) else { continue };
@@ -213,7 +213,7 @@ pub async fn replay(
             let msg = ServerMessage::Raw(frame.msg.clone());
             match message_type(&frame.msg) {
                 // Recomputed live by this bridge's own engine.
-                Some("StrategyUpdate") => continue,
+                Some("StrategyUpdate") | Some("RaceTiming") => continue,
                 Some("ConnectionStatus") => {
                     let _ = connection_status_tx.send(Some(msg.clone()));
                 }

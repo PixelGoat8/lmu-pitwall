@@ -16,6 +16,7 @@ mod lap_tracker;
 mod pit_api;
 mod post_race;
 mod protocol;
+mod race;
 mod race_engineer;
 mod recording;
 mod rest_api;
@@ -307,6 +308,7 @@ fn build_scoring_update(sc: &ScoringFrame, tel: Option<&TelemetryFrame>) -> (Ser
                 laps_behind_next: v.mLapsBehindNext,
                 num_pitstops:     v.mNumPitstops as i32,
                 pit_state:        v.mPitState,
+                num_penalties:    v.mNumPenalties as i32,
             }
         })
         .collect();
@@ -1508,6 +1510,8 @@ async fn main() -> Result<()> {
     // Strategy engine: reads the broadcast stream (this bridge's, a replay's,
     // or on a hub the relayed driver's) and adds the plan to it.
     tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx));
+    // Race events and lap history, from the same stream.
+    tokio::spawn(race::run(ws.broadcaster().subscribe(), ws.broadcaster()));
 
     // Optional recorder: one more subscriber on the broadcast channel.
     if let Some(path) = config.record.clone() {

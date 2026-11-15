@@ -183,6 +183,9 @@ pub struct VehicleScoring {
     /// `mPitState`: 0 none, 1 request, 2 entering, 3 stopped, 4 exiting.
     #[serde(default)]
     pub pit_state: u8,
+    /// Penalties still to serve (`mNumPenalties`).
+    #[serde(default)]
+    pub num_penalties: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -480,6 +483,9 @@ pub enum ServerMessage {
 
     /// The strategy plan, at every completed lap and every 2 s.
     StrategyUpdate(Box<crate::strategy::StrategyReport>),
+
+    /// Race event log and recent lap times of every car (see `crate::race`).
+    RaceTiming(Box<crate::race::RaceTiming>),
 
     // -----------------------------------------------------------------------
     // Hub mode (see `crate::hub`)
