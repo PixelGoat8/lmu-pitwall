@@ -487,6 +487,9 @@ pub enum ServerMessage {
     /// Race event log and recent lap times of every car (see `crate::race`).
     RaceTiming(Box<crate::race::RaceTiming>),
 
+    /// AI engineer comments and the AI layer's status (see `crate::ai`).
+    AiFeed(Box<crate::ai::AiFeed>),
+
     // -----------------------------------------------------------------------
     // Hub mode (see `crate::hub`)
     // -----------------------------------------------------------------------
@@ -782,6 +785,17 @@ pub enum ClientCommand {
     // -----------------------------------------------------------------------
     /// Replace the strategy settings (reserve, stint limit, tyre limit, …).
     StrategyConfig { config: crate::strategy::StrategyConfig },
+
+    // -----------------------------------------------------------------------
+    // AI comments
+    // -----------------------------------------------------------------------
+    /// Replace the AI settings (on/off, model, frequency, budget, …).
+    AiConfig { config: crate::ai::AiConfig },
+    /// Ask for a comment now, optionally with a question from the engineer.
+    AiAsk {
+        #[serde(default)]
+        question: Option<String>,
+    },
 
     // -----------------------------------------------------------------------
     // Hub commands (answered only by a Pitwall started with --hub)

@@ -73,6 +73,8 @@ pub struct WebSocketServer {
     hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
     /// Where strategy settings go.
     strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
+    /// Where AI settings and requests go.
+    ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
 }
 
 impl WebSocketServer {
@@ -85,6 +87,7 @@ impl WebSocketServer {
         access: Arc<Access>,
         hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
         strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
+        ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
     ) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (audio_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
@@ -102,6 +105,7 @@ impl WebSocketServer {
             access,
             hub_tx,
             strategy_tx,
+            ai_tx,
         }
     }
 
@@ -158,6 +162,7 @@ impl WebSocketServer {
             self.access.clone(),
             self.hub_tx.clone(),
             self.strategy_tx.clone(),
+            self.ai_tx.clone(),
         ));
     }
 }
@@ -182,6 +187,7 @@ async fn handle_client(
     access: Arc<Access>,
     hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
     strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
+    ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
 ) {
     // Default role is audio — this device plays engineer callouts.
     let mut is_audio = true;
@@ -396,6 +402,20 @@ async fn handle_client(
                                 if let ClientCommand::StrategyConfig { config } = cmd {
                                     let _ = strategy_tx.send(config);
                                     continue;
+                                }
+                                // AI: settings and "ask now". Remote clients hold
+                                // the token, so they are the team; the key and its
+                                // spending stay on the PC that runs this.
+                                match cmd {
+                                    ClientCommand::AiConfig { config } => {
+                                        let _ = ai_tx.send(crate::ai::AiCommand::Config(config));
+                                        continue;
+                                    }
+                                    ClientCommand::AiAsk { question } => {
+                                        let _ = ai_tx.send(crate::ai::AiCommand::Ask(question));
+                                        continue;
+                                    }
+                                    _ => {}
                                 }
 
                                 // Hub commands go to the hub coordinator, which

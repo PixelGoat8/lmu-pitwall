@@ -2,6 +2,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod access;
+mod ai;
 mod app_config;
 mod assets;
 mod config;
@@ -1496,6 +1497,7 @@ async fn main() -> Result<()> {
     let game_status_rx = connection_status_rx.clone();
     let (hub_tx, hub_rx) = tokio::sync::mpsc::unbounded_channel();
     let (strategy_tx, strategy_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (ai_tx, ai_rx) = tokio::sync::mpsc::unbounded_channel();
     let ws    = Arc::new(WebSocketServer::new(
         port,
         all_drivers_rx,
@@ -1505,6 +1507,7 @@ async fn main() -> Result<()> {
         access.clone(),
         config.hub.then_some(hub_tx),
         strategy_tx,
+        ai_tx,
     ));
 
     // Strategy engine: reads the broadcast stream (this bridge's, a replay's,
@@ -1512,6 +1515,8 @@ async fn main() -> Result<()> {
     tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx));
     // Race events and lap history, from the same stream.
     tokio::spawn(race::run(ws.broadcaster().subscribe(), ws.broadcaster()));
+    // AI engineer comments (off unless enabled and ANTHROPIC_API_KEY is set).
+    tokio::spawn(ai::run(ws.broadcaster().subscribe(), ws.broadcaster(), ai_rx));
 
     // Optional recorder: one more subscriber on the broadcast channel.
     if let Some(path) = config.record.clone() {
