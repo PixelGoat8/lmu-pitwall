@@ -39,6 +39,8 @@ pub struct ScoringSummary {
     pub pc_player: String,
     /// The slot of the player's car, and who the game says is driving it now.
     pub car_id: i64,
+    /// The car as the game names it ("Iron Lynx #63").
+    pub car_name: String,
     pub driver_name: String,
     /// `mControl` of that car; `None` from a bridge too old to send it.
     pub control: Option<i64>,
@@ -60,6 +62,7 @@ impl ScoringSummary {
             session_time: get_num(msg, "session_time").unwrap_or(0.0),
             pc_player: get_str(msg, "player_name"),
             car_id: player_id,
+            car_name: get_str(row, "car_name"),
             driver_name: get_str(row, "driver_name"),
             control: field(row, "control").and_then(|v| v.as_i64()),
             in_pits: get_bool(row, "in_pits"),

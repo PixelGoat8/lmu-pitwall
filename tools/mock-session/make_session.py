@@ -60,6 +60,8 @@ def main():
     ap.add_argument("--session", default="Race", choices=["Race", "Practice", "Qualifying"])
     ap.add_argument("--track", default="Mock Circuit")
     ap.add_argument("--team-class", default="Hyper", choices=["Hyper", "GT3"], help="class of the team car (GT3 = gets lapped by Hypercars)")
+    ap.add_argument("--car", type=int, default=-1, help="index of the team car (default: the third Hypercar, or the second GT3); "
+                    "two recordings with the same --seed and different --car give two teams in one race, for a hub")
     ap.add_argument("--fcy", default="", help='full course yellow as "start-end" in session seconds, e.g. "120-170"')
     ap.add_argument("--penalty-at", type=float, default=-1.0, help="session time the team car gets a penalty (-1 = never)")
     ap.add_argument("--lico", default="", help='lift-and-coast of the team car as "from_lap:seconds:saving", comma-separated, '
@@ -72,6 +74,8 @@ def main():
     track_len = 5800.0
     # The team car: the third Hypercar, or the second GT3.
     player_id = 2 if args.team_class == "Hyper" else (args.cars + 1) // 2 + 1
+    if 0 <= args.car < args.cars:
+        player_id = args.car
     fcy = tuple(float(x) for x in args.fcy.split("-")) if args.fcy else None
     lico = sorted(tuple(float(x) for x in part.split(":")) for part in args.lico.split(",")) if args.lico else []
 

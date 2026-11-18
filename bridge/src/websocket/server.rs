@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex, RwLock,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,10 +19,7 @@ use crate::fuel_calculator::api::handle_command as fuel_handle;
 use crate::hub::HubCommand;
 use crate::post_race::api::handle_command as post_race_handle;
 use crate::protocol::messages::{ClientCommand, ServerMessage};
-
-/// Broadcast channel capacity — number of queued messages per slow client
-/// before older messages are dropped (lagged receiver).
-const BROADCAST_CAPACITY: usize = 128;
+use crate::team::TeamLink;
 
 /// How often each client gets a `Heartbeat` message and a WebSocket ping.
 ///
@@ -45,57 +42,44 @@ pub enum Format {
     Json,
 }
 
-/// WebSocket broadcast server.
-///
-/// Accepts clients on `ws://0.0.0.0:<port>` and fans out every
-/// [`ServerMessage`] sent via [`broadcast`] to all connected clients.
+/// Commands about a hub's teams, with the team the client was watching (where
+/// an error goes back to).
+pub type TeamRequests = mpsc::UnboundedSender<(String, ClientCommand)>;
+
+/// The WebSocket server of a Pitwall: a driver's bridge (one team, its own
+/// car) or a hub (one team per car). Each client watches one team, chosen with
+/// `?team=<id>` when it connects; without one, or with an unknown one, the
+/// first team.
 pub struct WebSocketServer {
     port: u16,
-    tx: broadcast::Sender<Arc<ServerMessage>>,
+    teams: Arc<RwLock<Vec<Arc<TeamLink>>>>,
     /// Live count of connected WebSocket clients.
     client_count: Arc<AtomicUsize>,
     /// Watch channel — subscribers receive the new count on every change.
     count_tx: watch::Sender<usize>,
-    /// Latest AllDriversUpdate — sent immediately to newly connecting clients.
-    all_drivers_rx: watch::Receiver<Option<ServerMessage>>,
     /// Latest VersionInfo — sent immediately to newly connecting clients.
     version_info_rx: watch::Receiver<Option<ServerMessage>>,
-    /// Latest ConnectionStatus — sent immediately to newly connecting clients.
-    connection_status_rx: watch::Receiver<Option<ServerMessage>>,
     access: Arc<Access>,
-    /// Where hub commands go; `None` on an ordinary bridge.
-    hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
-    /// Where strategy settings go.
-    strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
-    /// Where AI settings and requests go.
-    ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
+    /// Where team commands go; `None` on a driver's bridge.
+    team_requests: Option<TeamRequests>,
 }
 
 impl WebSocketServer {
     pub fn new(
         port: u16,
-        all_drivers_rx: watch::Receiver<Option<ServerMessage>>,
         version_info_rx: watch::Receiver<Option<ServerMessage>>,
-        connection_status_rx: watch::Receiver<Option<ServerMessage>>,
         access: Arc<Access>,
-        hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
-        strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
-        ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
+        team_requests: Option<TeamRequests>,
     ) -> Self {
-        let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (count_tx, _) = watch::channel(0usize);
         WebSocketServer {
             port,
-            tx,
+            teams: Arc::new(RwLock::new(Vec::new())),
             client_count: Arc::new(AtomicUsize::new(0)),
             count_tx,
-            all_drivers_rx,
             version_info_rx,
-            connection_status_rx,
             access,
-            hub_tx,
-            strategy_tx,
-            ai_tx,
+            team_requests,
         }
     }
 
@@ -108,40 +92,62 @@ impl WebSocketServer {
         self.count_tx.subscribe()
     }
 
-    /// Returns a cloned sender for broadcasting from another task.
-    pub fn broadcaster(&self) -> broadcast::Sender<Arc<ServerMessage>> {
-        self.tx.clone()
+    pub fn add_team(&self, link: Arc<TeamLink>) {
+        if let Ok(mut teams) = self.teams.write() {
+            teams.retain(|t| t.id != link.id);
+            teams.push(link);
+        }
     }
 
-    /// Send a message to every connected client.
+    /// Stop serving a team. Its clients are disconnected once its stream
+    /// closes (when its engines and coordinator are stopped).
+    pub fn remove_team(&self, id: &str) {
+        if let Ok(mut teams) = self.teams.write() {
+            teams.retain(|t| t.id != id);
+        }
+    }
+
+    pub fn teams(&self) -> Vec<Arc<TeamLink>> {
+        self.teams.read().map(|t| t.clone()).unwrap_or_default()
+    }
+
+    fn first_team(&self) -> Arc<TeamLink> {
+        self.teams().into_iter().next().expect("a Pitwall always has a team")
+    }
+
+    /// The first team's stream: a driver's bridge has only that one.
+    pub fn broadcaster(&self) -> broadcast::Sender<Arc<ServerMessage>> {
+        self.first_team().tx.clone()
+    }
+
+    /// Send a message to the first team's clients (all of a driver's bridge).
     pub fn broadcast(&self, msg: ServerMessage) -> usize {
-        match self.tx.send(Arc::new(msg)) {
-            Ok(n) => n,
-            Err(_) => 0,
+        self.first_team().tx.send(Arc::new(msg)).unwrap_or(0)
+    }
+
+    /// Send a message to every client of every team.
+    pub fn broadcast_all(&self, msg: ServerMessage) {
+        let msg = Arc::new(msg);
+        for t in self.teams() {
+            let _ = t.tx.send(msg.clone());
         }
     }
 
     /// Accept a single WebSocket client from an already-accepted `TcpStream`.
     pub fn accept_client(&self, stream: TcpStream, peer: SocketAddr) {
         debug!("New WebSocket connection from {}", peer);
-        let rx = self.tx.subscribe();
-
         // The client is counted only once its handshake has been accepted
         // (see `handle_client`): a refused connection must neither keep the
         // bridge alive nor arm the idle shutdown.
         tokio::spawn(handle_client(
             stream,
             peer,
-            rx,
+            self.teams.clone(),
             self.client_count.clone(),
             self.count_tx.clone(),
-            self.all_drivers_rx.clone(),
             self.version_info_rx.clone(),
-            self.connection_status_rx.clone(),
             self.access.clone(),
-            self.hub_tx.clone(),
-            self.strategy_tx.clone(),
-            self.ai_tx.clone(),
+            self.team_requests.clone(),
         ));
     }
 }
@@ -150,24 +156,28 @@ impl WebSocketServer {
 // Per-client handler
 // ---------------------------------------------------------------------------
 
+/// The `team=` value of a query string.
+fn team_from_query(query: &str) -> Option<String> {
+    query.split('&').find_map(|p| p.strip_prefix("team=")).map(str::to_string).filter(|t| !t.is_empty())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_client(
     stream: TcpStream,
     peer: SocketAddr,
-    mut rx: broadcast::Receiver<Arc<ServerMessage>>,
+    teams: Arc<RwLock<Vec<Arc<TeamLink>>>>,
     client_count: Arc<AtomicUsize>,
     count_tx: watch::Sender<usize>,
-    all_drivers_rx: watch::Receiver<Option<ServerMessage>>,
     version_info_rx: watch::Receiver<Option<ServerMessage>>,
-    connection_status_rx: watch::Receiver<Option<ServerMessage>>,
     access: Arc<Access>,
-    hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
-    strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
-    ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
+    team_requests: Option<TeamRequests>,
 ) {
     let is_json = Arc::new(AtomicBool::new(false));
     let is_json_cb = is_json.clone();
     let level_flag = Arc::new(AtomicU8::new(LEVEL_NONE));
     let level_cb = level_flag.clone();
+    let wanted_team: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let wanted_team_cb = wanted_team.clone();
 
     let ws =
         match tokio_tungstenite::accept_hdr_async(stream, move |req: &Request, resp: Response| {
@@ -178,6 +188,9 @@ async fn handle_client(
                 .unwrap_or(false);
             if json_requested {
                 is_json_cb.store(true, Ordering::Relaxed);
+            }
+            if let Ok(mut t) = wanted_team_cb.lock() {
+                *t = req.uri().query().and_then(team_from_query);
             }
 
             // Browsers cannot set headers on a WebSocket, so the token comes
@@ -212,6 +225,17 @@ async fn handle_client(
         Level::Remote
     };
 
+    // The team this client watches: the one it asked for, or the first.
+    let wanted = wanted_team.lock().ok().and_then(|t| t.clone());
+    let team = {
+        let list = teams.read().map(|t| t.clone()).unwrap_or_default();
+        match list.iter().find(|t| Some(&t.id) == wanted.as_ref()).or(list.first()) {
+            Some(t) => t.clone(),
+            None => return,
+        }
+    };
+    let mut rx = team.tx.subscribe();
+
     let count = client_count.fetch_add(1, Ordering::Relaxed) + 1;
     let _ = count_tx.send(count);
 
@@ -220,39 +244,25 @@ async fn handle_client(
     } else {
         Format::MsgPack
     };
-    info!("Client {} connected ({:?}, format: {:?}, {} total)", peer, level, fmt, count);
+    info!("Client {} connected ({:?}, format: {:?}, team: {}, {} total)", peer, level, fmt, team.id, count);
 
     let (mut sink, mut incoming) = ws.split();
 
-    // Send the latest AllDriversUpdate snapshot immediately on connect so the
-    // frontend doesn't wait until the next car crosses the S/F line.
-    {
-        let latest = all_drivers_rx.borrow().clone();
-        if let Some(msg) = latest {
-            if let Ok(ws_msg) = serialize(&msg, fmt) {
-                let _ = sink.send(ws_msg).await;
-            }
-        }
-    }
-
-    // Send the latest VersionInfo immediately on connect (if check has completed).
-    {
-        let latest = version_info_rx.borrow().clone();
-        if let Some(msg) = latest {
-            if let Ok(ws_msg) = serialize(&msg, fmt) {
-                let _ = sink.send(ws_msg).await;
-            }
-        }
-    }
-
-    // Send the latest ConnectionStatus immediately on connect so the frontend
-    // never shows "Waiting" when the game was already running before connect.
-    {
-        let latest = connection_status_rx.borrow().clone();
-        if let Some(msg) = latest {
-            if let Ok(ws_msg) = serialize(&msg, fmt) {
-                let _ = sink.send(ws_msg).await;
-            }
+    // The latest snapshots first, so the dashboard does not wait for the next
+    // one: every car (until the next car crosses the line), the version check,
+    // and whether the game is running (never "Waiting" when it already was).
+    // (Cloned out first: a watch borrow must not be held across a send.)
+    let snapshots: Vec<ServerMessage> = [
+        team.all_drivers_rx.borrow().clone(),
+        version_info_rx.borrow().clone(),
+        team.connection_status_rx.borrow().clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    for latest in snapshots {
+        if let Ok(ws_msg) = serialize(&latest, fmt) {
+            let _ = sink.send(ws_msg).await;
         }
     }
 
@@ -328,10 +338,21 @@ async fn handle_client(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientCommand>(&text) {
                             Ok(cmd) => {
-                                // Strategy settings: the engine answers with a
-                                // fresh StrategyUpdate to everyone.
+                                // Commands that change the racing PC, or a hub's
+                                // teams and drivers, are for its own browser only.
+                                if level == Level::Remote && is_local_only(&cmd) {
+                                    warn!("Refused local-only command from remote client {}", peer);
+                                    let refusal = local_only_refusal(&cmd);
+                                    if let Ok(ws_msg) = serialize(&refusal, fmt) {
+                                        if sink.send(ws_msg).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    continue;
+                                }
+
                                 if let ClientCommand::FollowCar { car_name } = cmd {
-                                    if hub_tx.is_some() {
+                                    if team.hub_tx.is_some() {
                                         let msg = ServerMessage::HubError {
                                             message: "Choose the car on the Pitwall connected to the game (on the engineer's PC: http://localhost:9000).".into(),
                                         };
@@ -344,8 +365,10 @@ async fn handle_client(
                                     }
                                     continue;
                                 }
+                                // Strategy settings: the team's engine answers
+                                // with a fresh StrategyUpdate to its clients.
                                 if let ClientCommand::StrategyConfig { config } = cmd {
-                                    let _ = strategy_tx.send(config);
+                                    let _ = team.strategy_tx.send(config);
                                     continue;
                                 }
                                 // AI: settings and "ask now". Remote clients hold
@@ -353,28 +376,42 @@ async fn handle_client(
                                 // spending stay on the PC that runs this.
                                 match cmd {
                                     ClientCommand::AiConfig { config } => {
-                                        let _ = ai_tx.send(crate::ai::AiCommand::Config(config));
+                                        let _ = team.ai_tx.send(crate::ai::AiCommand::Config(config));
                                         continue;
                                     }
                                     ClientCommand::AiAsk { question } => {
-                                        let _ = ai_tx.send(crate::ai::AiCommand::Ask(question));
+                                        let _ = team.ai_tx.send(crate::ai::AiCommand::Ask(question));
                                         continue;
                                     }
                                     _ => {}
                                 }
 
-                                // Hub commands go to the hub coordinator, which
-                                // answers by broadcasting the new HubStatus.
+                                // Hub commands go to the team's coordinator, which
+                                // answers by broadcasting the new HubStatus; team
+                                // commands to the hub's team keeper.
+                                let not_a_hub = || ServerMessage::HubError {
+                                    message: "This Pitwall is not running as a hub (start it with --hub).".into(),
+                                };
                                 if let Some(hub_cmd) = HubCommand::from_client(&cmd) {
-                                    match &hub_tx {
+                                    match &team.hub_tx {
                                         Some(tx) => {
                                             let _ = tx.send(hub_cmd);
                                         }
                                         None => {
-                                            let refusal = ServerMessage::HubError {
-                                                message: "This Pitwall is not running as a hub (start it with --hub).".into(),
-                                            };
-                                            if let Ok(ws_msg) = serialize(&refusal, fmt) {
+                                            if let Ok(ws_msg) = serialize(&not_a_hub(), fmt) {
+                                                let _ = sink.send(ws_msg).await;
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                }
+                                if is_team_command(&cmd) {
+                                    match &team_requests {
+                                        Some(tx) => {
+                                            let _ = tx.send((team.id.clone(), cmd));
+                                        }
+                                        None => {
+                                            if let Ok(ws_msg) = serialize(&not_a_hub(), fmt) {
                                                 let _ = sink.send(ws_msg).await;
                                             }
                                         }
@@ -382,21 +419,9 @@ async fn handle_client(
                                     continue;
                                 }
 
-                                // Commands that change the racing PC are for its own
-                                // browser only.
-                                if level == Level::Remote && is_local_only(&cmd) {
-                                    warn!("Refused local-only command from remote client {}", peer);
-                                    let refusal = local_only_refusal(&cmd);
-                                    if let Ok(ws_msg) = serialize(&refusal, fmt) {
-                                        if sink.send(ws_msg).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    continue;
-                                }
-
+                                let dir = team.dir.clone();
                                 let response = tokio::task::spawn_blocking(move || {
-                                    dispatch_command(cmd)
+                                    dispatch_command(cmd, &dir)
                                 })
                                 .await;
                                 match response {
@@ -455,7 +480,8 @@ const LEVEL_LOCAL: u8 = 1;
 const LEVEL_REMOTE: u8 = 2;
 
 /// Commands a remote client may not send: they delete files on the racing PC,
-/// or make the bridge read a folder of the caller's choosing.
+/// make the bridge read a folder of the caller's choosing, or change which
+/// drivers and teams a hub follows (the hub's owner does that).
 fn is_local_only(cmd: &ClientCommand) -> bool {
     match cmd {
         ClientCommand::PostRaceInit { results_path } => {
@@ -463,8 +489,21 @@ fn is_local_only(cmd: &ClientCommand) -> bool {
         }
         // Deleting a session destroys data on this PC.
         ClientCommand::HistoryDelete { .. } => true,
+        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => true,
+        cmd if is_team_command(cmd) => true,
         _ => false,
     }
+}
+
+/// Commands about a hub's teams, handled by its team keeper.
+fn is_team_command(cmd: &ClientCommand) -> bool {
+    matches!(
+        cmd,
+        ClientCommand::HubMoveSource { .. }
+            | ClientCommand::TeamCreate { .. }
+            | ClientCommand::TeamUpdate { .. }
+            | ClientCommand::TeamDelete { .. }
+    )
 }
 
 /// The error a refused command gets back, in the family the sender listens to.
@@ -472,6 +511,8 @@ fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
     let message = "This action is only available on the racing PC itself.".to_string();
     match cmd {
         ClientCommand::HistoryDelete { .. } => ServerMessage::HistoryError { message },
+        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => ServerMessage::HubError { message },
+        cmd if is_team_command(cmd) => ServerMessage::HubError { message },
         _ => ServerMessage::PostRaceError { message },
     }
 }
@@ -485,9 +526,9 @@ fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
 /// Fuel-calculator commands go to `fuel_calculator::api`, all others to
 /// `post_race::api`. Both handlers are synchronous and must be called from
 /// `tokio::task::spawn_blocking`.
-fn dispatch_command(cmd: ClientCommand) -> ServerMessage {
+fn dispatch_command(cmd: ClientCommand, dir: &std::path::Path) -> ServerMessage {
     if crate::history::is_history_command(&cmd) {
-        return crate::history::handle_command(cmd, &crate::paths::root());
+        return crate::history::handle_command(cmd, dir);
     }
     if crate::track_store::is_track_command(&cmd) {
         return crate::track_store::handle_command(cmd);
@@ -526,6 +567,19 @@ mod tests {
         assert!(is_local_only(&ClientCommand::PostRaceInit {
             results_path: Some("C:\\Users".into())
         }));
+    }
+
+    #[test]
+    fn a_hubs_drivers_and_teams_are_managed_locally() {
+        assert!(is_local_only(&ClientCommand::HubAddSource { link: "x".into(), label: None }));
+        assert!(is_local_only(&ClientCommand::HubRemoveSource { id: "x".into() }));
+        assert!(is_local_only(&ClientCommand::HubMoveSource { source_id: "x".into(), team_id: "y".into() }));
+        assert!(is_local_only(&ClientCommand::TeamCreate { name: "Clienti".into(), color: None }));
+        assert!(is_local_only(&ClientCommand::TeamDelete { id: "x".into() }));
+        // Pinning a driver is the engineers' call, from anywhere.
+        assert!(!is_local_only(&ClientCommand::HubFollow { id: None }));
+        assert_eq!(team_from_query("format=json&team=clienti&token=x").as_deref(), Some("clienti"));
+        assert_eq!(team_from_query("token=x&team="), None);
     }
 
     #[test]

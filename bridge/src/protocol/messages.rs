@@ -488,6 +488,13 @@ pub enum ServerMessage {
         message: String,
     },
 
+    /// A hub's teams, every second, on every team's stream. `current` is the
+    /// team this client is watching.
+    Teams {
+        teams: Vec<TeamInfo>,
+        current: String,
+    },
+
     /// A message relayed as-is, without being decoded into one of the
     /// variants above: a frame from a recording, or (in hub mode) from another
     /// bridge. Serialized as the wrapped value itself, so on the wire it is
@@ -495,6 +502,24 @@ pub enum ServerMessage {
     /// bridge version that knows message types this one does not.
     #[serde(untagged)]
     Raw(rmpv::Value),
+}
+
+/// One team of a hub, as the team switcher and the sister-car marks need it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TeamInfo {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    /// Drivers' bridges in this team.
+    pub sources: u32,
+    /// The bridge being followed, by its label; `None` when nobody is.
+    pub active: Option<String>,
+    /// That bridge's PC is driving the car.
+    pub driving: bool,
+    /// The team's car as the game names it (e.g. "Iron Lynx #63"), and who
+    /// is in it; empty until a bridge in a session is followed.
+    pub car_name: String,
+    pub driver: String,
 }
 
 /// One bridge as a hub sees it.
@@ -782,6 +807,23 @@ pub enum ClientCommand {
         #[serde(default)]
         id: Option<String>,
     },
+    /// Move a driver's bridge to another team. Local only, like adding one.
+    HubMoveSource { source_id: String, team_id: String },
+    /// Teams of a hub. Local only.
+    TeamCreate {
+        name: String,
+        #[serde(default)]
+        color: Option<String>,
+    },
+    TeamUpdate {
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        color: Option<String>,
+    },
+    /// Only a team without drivers, and never the last one.
+    TeamDelete { id: String },
 
     // -----------------------------------------------------------------------
     // Fuel Calculator commands
