@@ -18,6 +18,10 @@ whose PC this recording is from. Run the script once per driver with the same
     python make_session.py alice.pwrec --me Alice --team "Alice:0-150,Bob:150-300"
     python make_session.py bob.pwrec   --me Bob   --team "Alice:0-150,Bob:150-300"
 
+Two cars of ours in one race (a hub with two teams): same `--seed`, a
+different `--car` for each. two-teams.ps1 next to this script does it all:
+the recordings, two replaying Pitwalls and a hub with the two teams.
+
 While someone else drives, this PC's own row has control=2 (remote) and the
 consumables are placeholders (fuel 50, wear 1.0), which is what LMU shows for
 other people's cars online. That the *team* car looks like this from a
@@ -90,7 +94,11 @@ def main():
         cars.append(dict(id=i, cls=cls, model=rng.choice(models), name=NAMES[i % len(NAMES)],
                          lap=args.lap_time * factor * (1 + rng.uniform(-0.012, 0.012)),
                          start=-i * 0.012))  # grid stagger, in laps
-    cars[player_id]["model"] = "Peugeot 9X8" if args.team_class == "Hyper" else "Ferrari 296 LMGT3"
+    # A fixed model for our car, except with --car: then every recording of
+    # the race must name each car the same way, or a hub cannot tell which
+    # car is whose.
+    if args.car < 0:
+        cars[player_id]["model"] = "Peugeot 9X8" if args.team_class == "Hyper" else "Ferrari 296 LMGT3"
     STATIONARY = 12.0  # seconds stopped in the box
     LANE_EXTRA = 20.0  # extra seconds the pit lane costs on top of that
     PIT_FREEZE = STATIONARY + LANE_EXTRA

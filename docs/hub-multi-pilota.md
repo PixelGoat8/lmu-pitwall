@@ -1,6 +1,8 @@
 # Hub multi-pilota
 
 Come seguire una gara a stint in cui guidano più amici, ognuno dal suo PC.
+Per l'uso quotidiano, con una o più auto, vedi
+[guida-ingegnere.md](guida-ingegnere.md); qui ci sono i dettagli.
 
 ## Come funziona
 
@@ -30,7 +32,22 @@ Si apre la dashboard dell'hub su `http://localhost:9100`. L'hub usa la porta
    pannello *Team & Stints*.
 3. Incolla il link, scrivi il nome del pilota, premi **Add**.
 
-L'elenco viene salvato in `%APPDATA%\LMUPitwall\hub.json` e ricaricato a ogni avvio.
+Il pilota finisce nella squadra che stai guardando. L'elenco viene salvato in
+`%APPDATA%\LMUPitwall\teams.json` e ricaricato a ogni avvio.
+
+## Più squadre (più auto)
+
+Un hub può seguire più auto nostre nella stessa gara: una **squadra** per auto,
+ognuna con i suoi piloti, la sua strategia, i suoi eventi, il suo storico e i
+suoi commenti AI, in `%APPDATA%\LMUPitwall\teams\<squadra>`. Tracciati,
+perdita in pit lane e budget AI restano in comune.
+
+- La dashboard sceglie la squadra coi pulsanti in alto, o con `?team=<id>`
+  nell'indirizzo; senza, mostra la prima.
+- Squadre e piloti si gestiscono solo dal PC dell'hub (pannello Team).
+- L'auto delle altre squadre è evidenziata col loro colore.
+- Un `hub.json` di una versione precedente diventa da solo la prima squadra,
+  *Squadra*, con le impostazioni di strategia e AI di prima.
 
 ## Il pannello Team
 
@@ -56,8 +73,9 @@ e di VE per giro.
 
 - Il carburante viene letto solo mentre il PC seguito sta guidando: da un altro
   PC il gioco dà un valore fisso.
-- Lo storico vive nella memoria dell'hub: si azzera se chiudi l'hub o inizia
-  una nuova sessione. Il salvataggio su disco arriva con la fase 6.
+- La tabella del pannello vive nella memoria dell'hub: si azzera se chiudi
+  l'hub o inizia una nuova sessione. La sessione resta comunque salvata nello
+  storico (🗂), uno per squadra: vedi [storico.md](storico.md).
 
 ## Limiti attuali
 
@@ -92,3 +110,6 @@ lmu-pitwall.exe --hub
 Poi nell'hub aggiungi `http://<ip-del-pc>:9141/?token=a` e
 `http://<ip-del-pc>:9142/?token=b`. Usa l'indirizzo di rete del PC, non
 `localhost`.
+
+Per due auto nostre nella stessa gara, già divise in due squadre, c'è
+`tools/mock-session/two-teams.ps1` (vedi [guida-ingegnere.md](guida-ingegnere.md#provare-senza-una-gara)).
