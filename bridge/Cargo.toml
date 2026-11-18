@@ -54,3 +54,6 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[build-dependencies]
+embed-resource = "2.5"

@@ -1,8 +1,8 @@
 ; LMU Pitwall — Windows installer (Inno Setup 6).
 ;
-; Windows: installer\build.ps1 compiles the dashboard and the bridge, then
-; this script. Linux: scripts/release.sh, through Wine, with the sources
-; passed in (/DExeSource=... /DLicenseSource=... /DIconSource=...).
+; installer\build.ps1 compiles the dashboard and the bridge, then this
+; script. The sources can be passed in (/DExeSource=... /DLicenseSource=...
+; /DIconSource=...) to build from another folder.
 ;
 ; One installer for everyone: a driver keeps the defaults; the engineer also
 ; ticks "Pitwall Hub".

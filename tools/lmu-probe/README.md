@@ -5,8 +5,8 @@ Answers one question, on evidence rather than on release notes:
 > **Can the bridge read everything it needs from LMU's built-in `LMU_Data`
 > mapping, with `rFactor2SharedMemoryMapPlugin64.dll` not installed at all?**
 
-Not part of the product build — a separate crate, so `make build-release` and
-`scripts/release.sh` are untouched.
+Not part of the product build — a separate crate, so the bridge build and
+`installer/build.ps1` are untouched.
 
 ## What it actually proves
 
@@ -65,8 +65,8 @@ Verdicts:
 ```bash
 cd tools/lmu-probe
 cargo test                                          # coverage table + layout assertions, on Linux
-cargo zigbuild --target x86_64-pc-windows-gnu --release
-# → target/x86_64-pc-windows-gnu/release/lmu-probe.exe
+cargo build --release
+# → target/release/lmu-probe.exe
 ```
 
 `cargo test` is worth running first: it exercises every extractor in the
