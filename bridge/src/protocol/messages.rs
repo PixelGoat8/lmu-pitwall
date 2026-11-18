@@ -537,6 +537,10 @@ pub struct HubSourceStatus {
     pub pc_player: String,
     /// Who the game says is driving that PC's car right now.
     pub driver_name: String,
+    /// That PC's car as the game names it ("Iron Lynx #63"); empty outside a
+    /// session. Drivers of one team should all show the same car.
+    #[serde(default)]
+    pub car_name: String,
     /// `mControl` of that car as that PC sees it; `None` if unknown.
     pub control: Option<i8>,
     /// That PC is the one driving (`control == 0`).

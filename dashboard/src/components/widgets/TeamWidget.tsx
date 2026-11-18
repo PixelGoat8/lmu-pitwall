@@ -3,7 +3,13 @@ import { useTelemetryStore } from '../../stores/telemetryStore'
 import { sendBridgeCommand } from '../../hooks/useWebSocket'
 import { colors, fonts } from '../../styles/theme'
 import { fmtLap } from '../../utils/lapFormat'
-import type { HubSourceStatus, HubStintInfo } from '../../types/telemetry'
+import { useTeamStore } from '../../stores/teamStore'
+import { useIsLocal } from '../../hooks/useIsLocal'
+import type { HubSourceStatus, HubStintInfo, TeamInfo } from '../../types/telemetry'
+
+// Colours offered for a team: distinct from each other and from the class
+// colours of the standings.
+const TEAM_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#9b59d0', '#d6457a', '#2bb3c0', '#8a8f98']
 
 const LINK_TEXT: Record<string, string> = {
   connecting: 'connecting…',
@@ -48,6 +54,11 @@ export default function TeamWidget() {
   const sessionTime = useTelemetryStore((s) => s.scoring.session_time)
   const [link, setLink] = useState('')
   const [label, setLabel] = useState('')
+  const teams = useTeamStore((s) => s.teams)
+  const current = useTeamStore((s) => s.current)
+  // Teams and drivers are managed on the hub's PC only (the hub refuses it
+  // from elsewhere), so the controls appear only there.
+  const local = useIsLocal()
 
   if (!status) {
     return (
@@ -70,6 +81,18 @@ export default function TeamWidget() {
   const remove = (s: HubSourceStatus) => {
     if (window.confirm(`Remove ${s.label} from the hub?`)) sendBridgeCommand({ command: 'hub_remove_source', id: s.id })
   }
+  const move = (s: HubSourceStatus, teamId: string) => {
+    const to = teams.find((t) => t.id === teamId)
+    if (to && window.confirm(`Move ${s.label} to ${to.name}?`)) sendBridgeCommand({ command: 'hub_move_source', source_id: s.id, team_id: teamId })
+  }
+
+  // One team, one car: drivers of this team in a session on different cars
+  // means one of them belongs to another team, and the hub cannot follow both.
+  const cars = new Map<string, string[]>()
+  for (const s of status.sources) {
+    if (s.link === 'connected' && s.car_name) cars.set(s.car_name, [...(cars.get(s.car_name) ?? []), s.label])
+  }
+  const mixedCars = cars.size > 1
 
   return (
     <div id="hub-team-panel" style={frame}>
@@ -115,13 +138,32 @@ export default function TeamWidget() {
               <button onClick={() => follow(isPinned ? null : s.id)} style={pill(isPinned)} title={isPinned ? 'Back to following the driver' : 'Stay on this PC whoever drives'}>
                 {isPinned ? 'Pinned' : 'Pin'}
               </button>
-              <button onClick={() => remove(s)} style={{ ...pill(false), padding: '3px 8px' }} title="Remove from the hub">✕</button>
+              {local && teams.length > 1 && current ? (
+                <select
+                  value={current}
+                  onChange={(e) => move(s, e.target.value)}
+                  title="Move this driver to another team"
+                  style={{ ...input, fontSize: 13, padding: '3px 4px', flex: '0 1 auto', maxWidth: 120 }}
+                >
+                  {teams.map((t) => <option key={t.id} value={t.id}>{t.id === current ? t.name : `→ ${t.name}`}</option>)}
+                </select>
+              ) : null}
+              {local ? <button onClick={() => remove(s)} style={{ ...pill(false), padding: '3px 8px' }} title="Remove from the hub">✕</button> : null}
             </div>
           )
         })}
       </div>
 
+      {mixedCars ? (
+        <div style={{ fontFamily: fonts.body, fontSize: 13, color: colors.accent, border: `1px solid ${colors.accent}`, borderRadius: 4, padding: '5px 8px', lineHeight: 1.4 }}>
+          ⚠ These drivers are on different cars:{' '}
+          {[...cars].map(([car, who]) => `${who.join(', ')} on ${car}`).join(' · ')}.
+          {' '}A team follows one car: move the other driver to their own team{local ? ' (menu next to the name)' : ' on the hub PC'}.
+        </div>
+      ) : null}
+
       {/* Add a bridge */}
+      {local ? (
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <input
           value={link}
@@ -139,7 +181,14 @@ export default function TeamWidget() {
         />
         <button onClick={add} disabled={!link.trim()} style={{ ...pill(true), opacity: link.trim() ? 1 : 0.4 }}>Add</button>
       </div>
+      ) : (
+        <span style={{ fontFamily: fonts.body, fontSize: 12, color: colors.textMuted }}>
+          Drivers and teams are managed on the hub's PC.
+        </span>
+      )}
       {error ? <span style={{ fontFamily: fonts.body, fontSize: 13, color: colors.danger }}>{error}</span> : null}
+
+      {local && teams.length > 0 ? <TeamsEditor teams={teams} current={current} /> : null}
 
       {/* Stints */}
       <span style={sectionTitle}>Stints</span>
@@ -161,6 +210,97 @@ export default function TeamWidget() {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * The hub's teams: rename, recolour, delete, create. Only on the hub's PC.
+ * A team with drivers cannot be deleted, nor the last one; the hub says why.
+ */
+function TeamsEditor({ teams, current }: { teams: TeamInfo[]; current: string | null }) {
+  const [name, setName] = useState('')
+  const [palette, setPalette] = useState<string | null>(null)
+  const create = () => {
+    if (!name.trim()) return
+    const used = new Set(teams.map((t) => t.color))
+    const color = TEAM_COLORS.find((c) => !used.has(c))
+    sendBridgeCommand({ command: 'team_create', name: name.trim(), color: color ?? null })
+    setName('')
+  }
+  const rename = (t: TeamInfo, value: string) => {
+    const v = value.trim()
+    if (v && v !== t.name) sendBridgeCommand({ command: 'team_update', id: t.id, name: v })
+  }
+  const recolour = (t: TeamInfo, color: string) => {
+    setPalette(null)
+    if (color !== t.color) sendBridgeCommand({ command: 'team_update', id: t.id, color })
+  }
+  const remove = (t: TeamInfo) => {
+    if (window.confirm(`Delete the team ${t.name}?`)) sendBridgeCommand({ command: 'team_delete', id: t.id })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={sectionTitle}>Teams</span>
+      {teams.map((t) => {
+        const canDelete = teams.length > 1 && t.sources === 0
+        return (
+          <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                onClick={() => setPalette(palette === t.id ? null : t.id)}
+                title="Team colour"
+                aria-label={`Colour of ${t.name}`}
+                style={{ width: 22, height: 22, borderRadius: '50%', background: t.color, border: `2px solid ${palette === t.id ? colors.text : colors.border}`, cursor: 'pointer', flexShrink: 0, padding: 0 }}
+              />
+              <input
+                key={t.name}
+                defaultValue={t.name}
+                onBlur={(e) => rename(t, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                  if (e.key === 'Escape') { e.currentTarget.value = t.name; e.currentTarget.blur() }
+                }}
+                aria-label="Team name"
+                style={{ ...input, flex: '1 1 100px', fontWeight: t.id === current ? 600 : 400 }}
+              />
+              <span style={{ fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, whiteSpace: 'nowrap' }}>
+                {t.sources === 1 ? '1 driver' : `${t.sources} drivers`}
+                {t.id === current ? ' · on screen' : ''}
+              </span>
+              <button
+                onClick={() => remove(t)}
+                disabled={!canDelete}
+                title={canDelete ? 'Delete this team' : teams.length === 1 ? 'The last team cannot be deleted' : 'Move its drivers to another team first'}
+                style={{ ...pill(false), padding: '3px 8px', opacity: canDelete ? 1 : 0.35, cursor: canDelete ? 'pointer' : 'default' }}
+              >✕</button>
+            </div>
+            {palette === t.id ? (
+              <div style={{ display: 'flex', gap: 6, paddingLeft: 30, flexWrap: 'wrap' }}>
+                {TEAM_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => recolour(t, c)}
+                    aria-label={c}
+                    style={{ width: 20, height: 20, borderRadius: '50%', background: c, border: `2px solid ${c === t.color ? colors.text : 'transparent'}`, cursor: 'pointer', padding: 0 }}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') create() }}
+          placeholder="New team, e.g. Clienti"
+          style={{ ...input, flex: 1 }}
+        />
+        <button onClick={create} disabled={!name.trim()} style={{ ...pill(true), opacity: name.trim() ? 1 : 0.4 }}>Create</button>
+      </div>
     </div>
   )
 }

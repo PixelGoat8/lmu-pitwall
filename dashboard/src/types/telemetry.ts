@@ -294,6 +294,7 @@ export interface HubSourceStatus {
   session_active: boolean
   pc_player: string
   driver_name: string
+  car_name?: string          // that PC's car in a session; empty outside one
   control: number | null
   driving: boolean
   in_pits: boolean

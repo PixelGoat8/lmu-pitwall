@@ -396,6 +396,7 @@ impl Hub {
                     session_active: s.session_active,
                     pc_player: s.summary.as_ref().map(|x| x.pc_player.clone()).unwrap_or_default(),
                     driver_name: s.summary.as_ref().map(|x| x.driver_name.clone()).unwrap_or_default(),
+                    car_name: s.summary.as_ref().filter(|_| s.session_active).map(|x| x.car_name.clone()).unwrap_or_default(),
                     control: s.summary.as_ref().and_then(|x| x.control).map(|c| c as i8),
                     driving: s.driving(),
                     in_pits: s.summary.as_ref().map(|x| x.in_pits).unwrap_or(false),
