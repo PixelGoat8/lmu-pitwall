@@ -20,7 +20,12 @@ Real-time sim racing dashboard for [Le Mans Ultimate](https://www.lemansultimate
 > | 7. Session history in SQLite: laps, every car's laps, stints, events, strategy, AI; History panel | done: [docs/storico.md](docs/storico.md) (Italian) |
 > | Engineer-seat fallback: follow the team car from LMU's engineer seat (timing, VE strategy, events, AI; no fuel or tyres) | done |
 > | Windows installer (firewall rule, hub icon, autostart) and a one-page guide for drivers | done: [docs/guida-pilota.md](docs/guida-pilota.md) (Italian) |
-> | Extra. Driver coaching: per-corner metrics, reference lap comparison (lift & coast is already in the strategy) | optional |
+> | Contributors: setup, workflow, CI, issue forms | done: [CONTRIBUTING.md](CONTRIBUTING.md) (Italian) |
+> | Clean-up of the original project's parts the team does not use | next |
+> | Multi-team: two crews in the same race, a hub per team, the sister car marked | planned |
+> | Focus on the data the drivers ask for | planned |
+> | Analysis of the telemetry LMU records (`UserData\Telemetry`): lap comparison, braking, lift & coast | planned |
+> | Graphics | planned |
 
 ## Hub: one dashboard for a team of drivers
 

@@ -1,0 +1,30 @@
+name: Dato o idea
+description: Un dato che vorresti vedere, o un'idea per migliorare Pitwall
+labels: ["idea"]
+body:
+  - type: textarea
+    id: cosa
+    attributes:
+      label: Cosa vorresti
+      description: Il dato o la funzione, con parole tue.
+    validations:
+      required: true
+  - type: textarea
+    id: quando
+    attributes:
+      label: Quando serve
+      description: In che momento della gara (stint, prima del box, in qualifica, dopo la gara…) e per decidere cosa.
+  - type: dropdown
+    id: chi
+    attributes:
+      label: Chi lo guarda
+      multiple: true
+      options:
+        - Pilota in macchina
+        - Ingegnere
+        - Tutti dopo la gara
+  - type: textarea
+    id: fonte
+    attributes:
+      label: Da dove viene (se lo sai)
+      description: Lo mostra il gioco da qualche parte? Un'altra app? Una schermata aiuta.

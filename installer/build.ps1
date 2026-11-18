@@ -8,9 +8,14 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 
-# The version is the bridge's (bridge\Cargo.toml).
-$version = (Select-String -Path "$root\bridge\Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' |
+# VERSION is the single source of truth (scripts/bump-version.py keeps the
+# bridge, the dashboard and the installer script in step with it). Refuse to
+# build if they disagree: the dashboard shows VERSION, the bridge reports
+# Cargo.toml's, and a mismatch went out once.
+$version = (Get-Content "$root\VERSION" -Raw).Trim()
+$cargo = (Select-String -Path "$root\bridge\Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' |
     Select-Object -First 1).Matches[0].Groups[1].Value
+if ($cargo -ne $version) { throw "VERSION is $version but bridge\Cargo.toml says $cargo: run scripts/bump-version.py" }
 Write-Host "LMU Pitwall $version"
 
 $iscc = @(

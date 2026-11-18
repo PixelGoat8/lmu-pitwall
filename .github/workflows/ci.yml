@@ -1,0 +1,42 @@
+# Builds the dashboard and runs the bridge tests on every pull request and
+# push to the team branch. Windows, like the PCs it runs on.
+name: CI
+
+on:
+  pull_request:
+    branches: [remote-engineer]
+  push:
+    branches: [remote-engineer]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      # The bridge embeds dashboard/dist, so the dashboard goes first.
+      - name: Dashboard (type check and build)
+        working-directory: dashboard
+        run: |
+          npm ci
+          npm run build
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bridge
+
+      - name: Bridge tests
+        working-directory: bridge
+        run: cargo test

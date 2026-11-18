@@ -1,0 +1,42 @@
+name: Problema
+description: Qualcosa non funziona o mostra un dato sbagliato
+labels: ["problema"]
+body:
+  - type: textarea
+    id: cosa
+    attributes:
+      label: Cosa è successo
+      description: Cosa hai visto, in quale widget o pagina.
+    validations:
+      required: true
+  - type: textarea
+    id: atteso
+    attributes:
+      label: Cosa ti aspettavi
+      description: Per esempio il valore che mostrava il gioco.
+  - type: input
+    id: gara
+    attributes:
+      label: Gara e momento
+      description: Pista, tipo di sessione, giro o ora più o meno, auto/classe.
+  - type: dropdown
+    id: dove
+    attributes:
+      label: Da dove guardavi
+      options:
+        - Pitwall sul PC del pilota
+        - Hub dell'ingegnere
+        - Posto engineer di LMU
+        - Tablet
+    validations:
+      required: true
+  - type: input
+    id: versione
+    attributes:
+      label: Versione
+      description: Il numero in alto a destra nella dashboard (es. v1.3.0).
+  - type: textarea
+    id: schermate
+    attributes:
+      label: Schermate
+      description: Trascinale qui. Togli token, link e nomi che non vuoi rendere pubblici.

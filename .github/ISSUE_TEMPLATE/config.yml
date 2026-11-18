@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Guida per i piloti
+    url: https://github.com/PixelGoat8/lmu-pitwall/blob/remote-engineer/docs/guida-pilota.md
+    about: Installazione, Tailscale, il link per l'ingegnere.
