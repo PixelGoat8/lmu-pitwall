@@ -40,8 +40,11 @@ Paste each driver's link into the **Team & Stints** panel (click the 👥 badge)
 The hub relays the stream of whichever PC is driving, switches by itself at a
 driver swap, and keeps the stint history across swaps: driver, duration, laps,
 best and average lap, fuel and virtual energy per lap. A bridge can be pinned
-when the automatic choice is not what you want. Details and current limits:
-[docs/hub-multi-pilota.md](docs/hub-multi-pilota.md).
+when the automatic choice is not what you want. One hub can follow several
+cars of ours in the same race, one **team** per car, each with its own
+drivers, strategy and history; the other car is highlighted in its team's
+colour. Engineer's guide (Italian): [docs/guida-ingegnere.md](docs/guida-ingegnere.md);
+details and current limits: [docs/hub-multi-pilota.md](docs/hub-multi-pilota.md).
 
 ## Session history
 

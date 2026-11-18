@@ -25,11 +25,7 @@ const MAX_CLOSE_M: f64 = 200.0;
 const MAX_HOLE_M: f64 = 150.0;
 
 fn data_dir() -> PathBuf {
-    std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join("LMUPitwall")
-        .join("tracks")
+    crate::paths::root().join("tracks")
 }
 
 /// File name for a track: letters and digits, lower case, everything else `_`.

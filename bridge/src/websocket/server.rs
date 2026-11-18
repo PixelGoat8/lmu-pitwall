@@ -512,13 +512,15 @@ fn is_team_command(cmd: &ClientCommand) -> bool {
     )
 }
 
+const HUB_ONLY: &str = "Teams and drivers are managed on the hub's PC (http://localhost there).";
+
 /// The error a refused command gets back, in the family the sender listens to.
 fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
     let message = "This action is only available on the racing PC itself.".to_string();
     match cmd {
         ClientCommand::HistoryDelete { .. } => ServerMessage::HistoryError { message },
-        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => ServerMessage::HubError { message },
-        cmd if is_team_command(cmd) => ServerMessage::HubError { message },
+        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => ServerMessage::HubError { message: HUB_ONLY.into() },
+        cmd if is_team_command(cmd) => ServerMessage::HubError { message: HUB_ONLY.into() },
         _ => ServerMessage::PostRaceError { message },
     }
 }

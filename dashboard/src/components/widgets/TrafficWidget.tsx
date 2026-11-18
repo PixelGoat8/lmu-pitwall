@@ -4,6 +4,8 @@ import { colors, fonts } from '../../styles/theme'
 import { getClassColor } from '../../utils/classColors'
 import { traffic, TRAFFIC_WINDOW_S } from '../../utils/traffic'
 import type { TrafficCar } from '../../utils/traffic'
+import { useSisterCars } from '../../utils/sisterCars'
+import type { SisterCar } from '../../utils/sisterCars'
 
 /** Show at most this many cars per side. */
 const MAX_ROWS = 3
@@ -20,6 +22,7 @@ export default function TrafficWidget() {
   const playerId = useTelemetryStore((s) => s.scoring.player_vehicle_id)
   const trackLength = useTelemetryStore((s) => s.session.track_length)
   const blue = useTelemetryStore((s) => s.vehicleStatus.player_flag === 6)
+  const sisters = useSisterCars()
 
   const cars = useMemo(() => traffic(vehicles, playerId, trackLength), [vehicles, playerId, trackLength])
   const behind = cars.filter((c) => c.side === 'behind').slice(0, MAX_ROWS)
@@ -32,8 +35,8 @@ export default function TrafficWidget() {
           BLUE FLAG
         </div>
       ) : null}
-      <Section title="Faster cars coming" empty="nobody closing from behind" rows={behind} />
-      <Section title="Traffic ahead to lap" empty="no slower car within reach" rows={ahead} />
+      <Section title="Faster cars coming" empty="nobody closing from behind" rows={behind} sisters={sisters} />
+      <Section title="Traffic ahead to lap" empty="no slower car within reach" rows={ahead} sisters={sisters} />
       <span style={{ fontFamily: fonts.body, fontSize: 11, color: colors.textMuted }}>
         Other classes within {TRAFFIC_WINDOW_S} s on track; time to catch at each car's recent pace.
       </span>
@@ -41,18 +44,18 @@ export default function TrafficWidget() {
   )
 }
 
-function Section({ title, empty, rows }: { title: string; empty: string; rows: TrafficCar[] }) {
+function Section({ title, empty, rows, sisters }: { title: string; empty: string; rows: TrafficCar[]; sisters: Map<string, SisterCar> }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       <span style={{ fontFamily: fonts.body, fontSize: 12, color: colors.textMuted, letterSpacing: 2, textTransform: 'uppercase' }}>{title}</span>
       {rows.length === 0 ? (
         <span style={{ fontFamily: fonts.body, fontSize: 14, color: colors.textMuted }}>{empty}</span>
-      ) : rows.map((r) => <Row key={r.car.id} r={r} />)}
+      ) : rows.map((r) => <Row key={r.car.id} r={r} sister={sisters.get(r.car.car_name)} />)}
     </div>
   )
 }
 
-function Row({ r }: { r: TrafficCar }) {
+function Row({ r, sister }: { r: TrafficCar; sister?: SisterCar }) {
   const urgent = (r.catch_in_s ?? Infinity) < URGENT_S
   const cls = getClassColor(r.car.vehicle_class)
   return (
@@ -60,6 +63,7 @@ function Row({ r }: { r: TrafficCar }) {
       <span style={{ fontFamily: fonts.mono, fontSize: 12, color: cls, border: `1px solid ${cls}`, borderRadius: 3, padding: '0 4px', flexShrink: 0 }}>{r.car.vehicle_class}</span>
       <span style={{ fontFamily: fonts.body, fontSize: 15, color: colors.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
         #{r.car.id} {r.car.driver_name}
+        {sister ? <span style={{ color: sister.color }}> · {sister.team}</span> : null}
       </span>
       <span style={{ fontFamily: fonts.mono, fontSize: 13, color: colors.textMuted, whiteSpace: 'nowrap' }}>{r.gap_s.toFixed(1)} s</span>
       <span style={{ fontFamily: fonts.mono, fontSize: 17, fontWeight: 700, color: urgent ? colors.accent : colors.text, whiteSpace: 'nowrap', minWidth: 64, textAlign: 'right' }}>

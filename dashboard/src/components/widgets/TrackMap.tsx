@@ -34,6 +34,7 @@ import {
 } from '../../utils/trackOutline'
 import { newTrail, pushSample, renderDelay, sampleAt, type Trail } from '../../utils/motionTrail'
 import { type Build, freshBuild, stepBuild, needsRecording, hasSectorLines } from '../../utils/trackRecorder'
+import { useSisterCars } from '../../utils/sisterCars'
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -79,6 +80,8 @@ interface Marker {
   isPlayer: boolean
   /** The car one place ahead of or behind ours in our class. */
   isRival: boolean
+  /** Colour of our other team, when this is its car. */
+  sister: string | null
 }
 
 /** Ring drawn around the class rivals directly ahead and behind. */
@@ -88,6 +91,9 @@ export default function TrackMap() {
   const trackName = useTelemetryStore((s) => s.session.track_name)
   const trackLength = useTelemetryStore((s) => s.session.track_length)
   const detail = useSettingsStore((s) => s.trackMapDetail)
+  const sisters = useSisterCars()
+  let sisterKey = ''
+  for (const [car, s] of sisters) sisterKey += `|${car}=${s.color}`
 
   // The cars on screen, with their class colour and rank within that class.
   //
@@ -97,7 +103,7 @@ export default function TrackMap() {
   const rosterCache = useRef<{ key: string; list: Marker[] }>({ key: '', list: [] })
   const roster = useTelemetryStore((s) => {
     const { vehicles, player_vehicle_id } = s.scoring
-    let key = String(player_vehicle_id)
+    let key = String(player_vehicle_id) + sisterKey
     for (const v of vehicles) key += `|${v.id}:${v.vehicle_class}:${v.position}`
     if (key === rosterCache.current.key) return rosterCache.current.list
 
@@ -110,7 +116,7 @@ export default function TrackMap() {
         const cls = v.vehicle_class || ''
         const rank = (rankInClass.get(cls) ?? 0) + 1
         rankInClass.set(cls, rank)
-        return { id: v.id, color: getClassColor(cls), label: rank || v.position, isPlayer: v.id === player_vehicle_id, isRival: rivals.has(v.id) }
+        return { id: v.id, color: getClassColor(cls), label: rank || v.position, isPlayer: v.id === player_vehicle_id, isRival: rivals.has(v.id), sister: v.id === player_vehicle_id ? null : sisters.get(v.car_name)?.color ?? null }
       })
     rosterCache.current = { key, list }
     return list
@@ -499,6 +505,9 @@ export default function TrackMap() {
                 <g key={v.id} ref={(node) => attachMarker(v.id, node)} opacity={0}>
                   {v.isPlayer && (
                     <circle r={r + 5} fill="none" stroke={PLAYER_STROKE} strokeWidth={1.5} opacity={0.35} />
+                  )}
+                  {v.sister && (
+                    <circle r={r + 5} fill="none" stroke={v.sister} strokeWidth={3} />
                   )}
                   {v.isRival && (
                     <circle r={r + 4} fill="none" stroke={RIVAL_STROKE} strokeWidth={2} strokeDasharray="3 2" />
