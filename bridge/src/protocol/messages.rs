@@ -743,6 +743,8 @@ pub enum ClientCommand {
     TrackOutlineGet { track: String },
     /// Keep an outline a dashboard has just recorded (its JSON text).
     TrackOutlineSave { track: String, json: String },
+    /// Forget the stored outline, so the next lap records a new one.
+    TrackOutlineDelete { track: String },
 
     /// Follow this car (its name as the game shows it) when the PC has no car
     /// of its own, e.g. in LMU's engineer seat. `null` stops following.

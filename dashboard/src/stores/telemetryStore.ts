@@ -144,6 +144,9 @@ interface TelemetryStore {
   history: { sessions: SessionSummary[] | null; detail: SessionDetail | null; carLaps: { session_id: number; laps: CarLapRow[] } | null; error: string | null }
   /** The bridge's latest answer about a stored track outline. */
   trackOutline: { track: string; json: string | null; at: number } | null
+  /** Set by the settings when an outline is deleted, so an open map forgets
+   *  it instead of storing it again. */
+  trackOutlineDeleted: { track: string; at: number } | null
   lapHistory: LapEntry[]
   weatherHistory: WeatherSnapshot[]
   _lapTracking: { prevTotalLaps: number; prevPlayerId: number }
@@ -309,6 +312,7 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
   aiFeed: null,
   history: { sessions: null, detail: null, carLaps: null, error: null },
   trackOutline: null,
+  trackOutlineDeleted: null,
   lapHistory: [],
   weatherHistory: [],
   _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },

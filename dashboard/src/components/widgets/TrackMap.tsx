@@ -210,13 +210,23 @@ export default function TrackMap() {
         sendBridgeCommand({ command: 'track_outline_save', track: ours.trackName, json: JSON.stringify(ours) })
       }
     })
+    // Deleted from the settings: forget it and record again.
+    const unsubDel = useTelemetryStore.subscribe((state, prev) => {
+      const del = state.trackOutlineDeleted
+      if (!del || del === prev.trackOutlineDeleted || del.track !== loadedTrackRef.current) return
+      outlineRef.current = null
+      fittedRef.current = false
+      setOutline(null)
+      buildsRef.current = new Map()
+      setRecord('outlap')
+    })
     const unsubConn = useTelemetryStore.subscribe((state, prev) => {
       if (state.connection.status === 'connected' && prev.connection.status !== 'connected' && loadedTrackRef.current) {
         sendBridgeCommand({ command: 'track_outline_get', track: loadedTrackRef.current })
       }
     })
-    return () => { unsubReply(); unsubConn() }
-  }, [adoptOutline])
+    return () => { unsubReply(); unsubDel(); unsubConn() }
+  }, [adoptOutline, setRecord])
 
   // --------------------------------------------------------------------------
   // Sample every car's line into an outline: the first clean lap of any of

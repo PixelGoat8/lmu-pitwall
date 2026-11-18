@@ -19,8 +19,8 @@
 //!
 //! `t` is milliseconds since the start of the recording. `m` is the exact
 //! MessagePack the bridge would send a client — lossless, which matters
-//! because the stream contains values JSON cannot carry (`fuel_laps_remaining`
-//! is infinite until there is a consumption average). `j` is the same message
+//! because a message may hold values JSON cannot carry (an infinite or NaN
+//! float). `j` is the same message
 //! as plain JSON: lossy for those values, but writable by hand or by a script,
 //! which is what synthetic test sessions use. The recorder writes `m`; the
 //! player accepts both. Lines starting with `#` and blank lines are ignored.
@@ -295,13 +295,13 @@ mod tests {
 
         let inf = rmpv::Value::Map(vec![
             (rmpv::Value::from("type"), rmpv::Value::from("TelemetryUpdate")),
-            (rmpv::Value::from("fuel_laps_remaining"), rmpv::Value::F64(f64::INFINITY)),
+            (rmpv::Value::from("laps_left"), rmpv::Value::F64(f64::INFINITY)),
         ]);
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &inf).unwrap();
         let r = rec(&format!("{{\"t\":0,\"m\":\"{}\"}}", B64.encode(bytes))).unwrap();
         assert_eq!(
-            field(&r.frames[0].msg, "fuel_laps_remaining").and_then(|v| v.as_f64()),
+            field(&r.frames[0].msg, "laps_left").and_then(|v| v.as_f64()),
             Some(f64::INFINITY)
         );
     }

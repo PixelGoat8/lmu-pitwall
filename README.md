@@ -179,8 +179,9 @@ Widget layout is drag-and-drop; positions and sizes are saved automatically.
 Le Mans Ultimate (Windows)
 ├── LMU_Data shared memory  (100 Hz telemetry, 5 Hz scoring)
 └── REST API  :6397
-    ├── GET /rest/strategy/usage                        (Virtual Energy history)
-    └── GET /rest/garage/UIScreen/RepairAndRefuel       (wearables: aero, brakes, suspension)
+    ├── GET /rest/garage/UIScreen/RepairAndRefuel       (wearables, pit menu, pit times)
+    ├── GET /rest/strategy/pitstop-estimate             (the game's own stop estimate)
+    └── GET /rest/sessions/weather                      (forecast)
 
 lmu-pitwall.exe (Rust, single binary)
 ├── Shared Memory reader ──────────────────────────────► WebSocket server :9000

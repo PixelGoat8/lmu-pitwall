@@ -610,7 +610,7 @@ async fn task_polling(
     let mut forecast_ticker = tokio::time::interval(Duration::from_secs(5));
     forecast_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-    // Player name for strategy/usage lookup (extracted from scoring).
+    // The player's name, recorded for the post-race results (from scoring).
     let mut last_player_name = String::new();
 
     // With *Settings → Gameplay → Enable Plugins* off, LMU publishes no
