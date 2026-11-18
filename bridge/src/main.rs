@@ -7,7 +7,6 @@ mod app_config;
 mod assets;
 mod config;
 mod electronics;
-mod fuel;
 mod follow;
 mod fuel_calculator;
 mod gaps;
@@ -22,7 +21,6 @@ mod post_race;
 mod protocol;
 mod race;
 mod recording;
-mod rest_api;
 mod session_kind;
 mod track_store;
 mod shared_memory;
@@ -42,7 +40,6 @@ use tracing::{info, warn};
 
 use config::Config;
 use electronics::ElectronicsSnapshot;
-use fuel::{FuelSnapshot, FuelTracker};
 use lap_tracker::LapTracker;
 use protocol::messages::{ServerMessage, TireData, Vec3, VehicleScoring, WeatherData};
 use shared_memory::reader::SharedMemoryReader;
@@ -61,11 +58,6 @@ struct TelemetryState {
     scoring: Option<ScoringFrame>,
     is_connected: bool,
     electronics: ElectronicsSnapshot,
-    /// Per-lap VE history from strategy/usage REST API; None = data unavailable.
-    ve_history: Option<Vec<f64>>,
-    /// Whether this car supports Virtual Energy (derived from telemetry).
-    /// None = not yet determined.
-    ve_available: Option<bool>,
     /// Latest wearables snapshot from RepairAndRefuel REST API.
     wearables: garage_api::WearablesSnapshot,
     /// Latest weather forecast nodes from /rest/sessions/weather REST API.
@@ -81,8 +73,6 @@ impl TelemetryState {
             scoring: None,
             is_connected: false,
             electronics: ElectronicsSnapshot::default(),
-            ve_history: None,
-            ve_available: None,
             wearables: garage_api::WearablesSnapshot::default(),
             weather_forecast: Vec::new(),
             lockups: Default::default(),
@@ -118,9 +108,6 @@ fn session_type_str(session: i32) -> &'static str {
 fn build_telemetry_update(
     tel: &TelemetryFrame,
     player_id: i32,
-    fuel: &FuelSnapshot,
-    ve_history: Option<Vec<f64>>,
-    ve_available: Option<bool>,
     lockups: &[tyres::LockupStats; 4],
     spectated: bool,
 ) -> Option<ServerMessage> {
@@ -194,18 +181,6 @@ fn build_telemetry_update(
         delta_best,
         current_et:   elapsed_time,
         lap_start_et: lap_start_et,
-        // Fuel strategy
-        fuel_avg_consumption:   fuel.avg_consumption,
-        fuel_avg_sample_count:  fuel.sample_count,
-        fuel_laps_remaining:    fuel.laps_remaining,
-        fuel_stint_number:      fuel.stint_number,
-        fuel_stint_laps:        fuel.stint_laps,
-        fuel_stint_consumption: fuel.stint_consumption,
-        fuel_recommended:       fuel.recommended,
-        fuel_pit_detected:      fuel.pit_detected,
-        fuel_avg_lap_time:      fuel.avg_lap_time,
-        ve_history,
-        ve_available,
         heading_deg,
         spectated,
     })
@@ -610,14 +585,6 @@ async fn task_polling(
     // Latest layout-check failure reason; `None` while telemetry looks sane.
     let mut telemetry_warning: Option<String> = None;
 
-    // Track session identity for VE history clearing: "<session>/<track_name>"
-    let mut last_session_key = String::new();
-
-    // Channel for strategy/usage VE fetch results.
-    let (strategy_tx, mut strategy_rx) = tokio::sync::mpsc::channel::<Vec<f64>>(4);
-    // Guard: skip tick if a strategy fetch is already in flight.
-    let strategy_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
     // Channel for wearables (RepairAndRefuel) fetch results.
     // One RepairAndRefuel request feeds both the wearables and PitInfo.
     let (wearables_tx, mut wearables_rx) =
@@ -634,10 +601,6 @@ async fn task_polling(
     // Health check fires immediately on first tick, then every 2 seconds.
     let mut health_ticker = tokio::time::interval(Duration::from_secs(2));
     health_ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
-    // strategy/usage VE poll every 3 seconds.
-    let mut strategy_ticker = tokio::time::interval(Duration::from_secs(3));
-    strategy_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // Wearables poll every 2 seconds (damage changes slowly).
     let mut wearables_ticker = tokio::time::interval(Duration::from_secs(2));
@@ -698,8 +661,6 @@ async fn task_polling(
                         s.lockups = Default::default();
                         s.telemetry = None;
                         s.scoring = None;
-                        s.ve_history = None;
-                        s.ve_available = None;
                         s.wearables = garage_api::WearablesSnapshot::default();
                         s.weather_forecast = Vec::new();
                     }
@@ -728,13 +689,6 @@ async fn task_polling(
                         .or_else(|| t.mVehicles.iter().find(|v| v.mID == player_id_from_sc))
                         .map(ElectronicsSnapshot::from_telemetry)
                 }).unwrap_or_default();
-
-                // Derive ve_available from telemetry.
-                let ve_available = tel.as_ref().and_then(|t| {
-                    t.player()
-                        .or_else(|| t.mVehicles.iter().find(|v| v.mID == player_id_from_sc))
-                        .map(|v| v.mVirtualEnergy > 0.0 || v.mBatteryChargeFraction > 0.0)
-                });
 
                 // --- shared-memory layout sanity check ---
                 // mWheels is the last field of rF2VehicleTelemetry, so any field
@@ -779,20 +733,8 @@ async fn task_polling(
                     let _ = connection_status_tx.send(Some(msg));
                 }
 
-                // Session-change detection → clear VE history + track player name.
+                // The player's name, for the post-race results (see below).
                 if let Some(ref sc_data) = sc {
-                    let key = format!(
-                        "{}/{}",
-                        sc_data.mScoringInfo.mSession,
-                        bytes_to_str(&sc_data.mScoringInfo.mTrackName),
-                    );
-                    if !last_session_key.is_empty() && key != last_session_key {
-                        info!("Session changed — clearing VE history");
-                        state.write().await.ve_history = None;
-                    }
-                    last_session_key = key;
-
-                    // Track player name for strategy/usage lookup.
                     if let Some(name) = sc_data
                         .player()
                         .map(|v| bytes_to_str(&v.mDriverName).to_string())
@@ -833,32 +775,6 @@ async fn task_polling(
                     s.scoring = sc;
                 }
                 s.electronics = electronics;
-                if let Some(v) = ve_available {
-                    s.ve_available = Some(v);
-                }
-            }
-
-            // --- strategy/usage VE poll (0.33 Hz) ---
-            _ = strategy_ticker.tick() => {
-                if reader.is_connected() && !last_player_name.is_empty()
-                    && !strategy_in_flight.load(Ordering::Relaxed)
-                {
-                    let name = last_player_name.clone();
-                    let tx = strategy_tx.clone();
-                    let flag = strategy_in_flight.clone();
-                    flag.store(true, Ordering::Relaxed);
-                    tokio::task::spawn_blocking(move || {
-                        if let Some(ve) = garage_api::fetch_strategy_ve(&name) {
-                            let _ = tx.blocking_send(ve);
-                        }
-                        flag.store(false, Ordering::Relaxed);
-                    });
-                }
-            }
-
-            // --- strategy/usage VE result ---
-            Some(history) = strategy_rx.recv() => {
-                state.write().await.ve_history = Some(history);
             }
 
             // --- wearables poll (0.5 Hz) ---
@@ -959,8 +875,6 @@ async fn task_polling(
                         s.is_connected = false;
                         s.telemetry    = None;
                         s.scoring      = None;
-                        s.ve_history   = None;
-                        s.ve_available = None;
                         s.wearables    = garage_api::WearablesSnapshot::default();
                         was_connected  = false;
                         last_player_name = String::new();
@@ -1005,11 +919,6 @@ async fn task_broadcaster(
     // Our car is followed from the engineer seat: its consumables are placeholders.
     let mut spectated = false;
 
-    // Fuel strategy tracker — lives here for the lifetime of the broadcaster task.
-    let mut fuel_tracker = FuelTracker::new();
-    let mut fuel_snapshot = FuelSnapshot::default();
-    let mut fuel_session_key = String::new();
-
     // All-drivers lap snapshot tracker.
     let mut lap_tracker = LapTracker::new();
 
@@ -1040,60 +949,8 @@ async fn task_broadcaster(
                 continue;
             }
 
-            // Session-change detection for fuel tracker reset.
-            if let Some(ref sc) = s.scoring {
-                let key = format!(
-                    "{}/{}",
-                    sc.mScoringInfo.mSession,
-                    bytes_to_str(&sc.mScoringInfo.mTrackName),
-                );
-                if !fuel_session_key.is_empty() && key != fuel_session_key {
-                    fuel_tracker = FuelTracker::new();
-                    fuel_snapshot = FuelSnapshot::default();
-                    info!("Session changed — fuel tracker reset");
-                }
-                fuel_session_key = key;
-            }
-
-            // Update fuel tracker on every telemetry tick (needs mutable access outside lock).
-            if send_tel {
-                if let (Some(ref tel), Some(ref sc)) = (&s.telemetry, &s.scoring) {
-
-                    let current_fuel = tel
-                        .player()
-                        .or_else(|| tel.mVehicles.iter().find(|v| v.mID == player_id))
-                        .map(|v| v.mFuel)
-                        .unwrap_or(0.0);
-
-                    let player_sc = sc.mVehicles
-                        .iter()
-                        .find(|v| v.mID == player_id || v.mIsPlayer != 0);
-
-                    let current_lap = player_sc
-                        .map(|v| v.mTotalLaps as i32)
-                        .unwrap_or(0);
-
-                    let in_pits = player_sc
-                        .map(|v| v.mInPits != 0)
-                        .unwrap_or(false);
-
-                    let last_lap_time = player_sc
-                        .map(|v| v.mLastLapTime)
-                        .unwrap_or(-1.0);
-
-                    let max_laps = sc.mScoringInfo.mMaxLaps;
-                    let session_laps_remaining = if max_laps > 0 && max_laps < 999_000 {
-                        (max_laps - current_lap).max(0)
-                    } else {
-                        -1
-                    };
-
-                    fuel_snapshot = fuel_tracker.update(current_fuel, current_lap, in_pits, session_laps_remaining, last_lap_time);
-                }
-            }
-
             let tel_msg = if send_tel {
-                s.telemetry.as_ref().and_then(|t| build_telemetry_update(t, player_id, &fuel_snapshot, s.ve_history.clone(), s.ve_available, &s.lockups, spectated))
+                s.telemetry.as_ref().and_then(|t| build_telemetry_update(t, player_id, &s.lockups, spectated))
             } else {
                 None
             };

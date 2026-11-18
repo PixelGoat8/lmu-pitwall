@@ -212,22 +212,6 @@ pub enum ServerMessage {
         delta_best: f64,
         current_et: f64,
         lap_start_et: f64, // session ET when current lap started (for current lap calc)
-        // Fuel strategy (computed by FuelTracker)
-        fuel_avg_consumption: f64, // L/lap rolling median; 0 = no valid data yet
-        fuel_avg_sample_count: u32, // number of fuel-consumption samples (0–10)
-        fuel_laps_remaining: f64,  // estimated laps on current fuel; f64::INFINITY if no avg
-        fuel_stint_number: u32,    // 1-based stint counter
-        fuel_stint_laps: u32,      // laps completed in current stint (including outlap)
-        fuel_stint_consumption: f64, // total fuel used since stint start
-        fuel_recommended: f64,     // kept for protocol compat; always 0.0
-        fuel_pit_detected: bool,   // true for ~3s after pit stop detected
-        fuel_avg_lap_time: f64,    // rolling median lap time (s); 0 = no valid data yet
-        // Virtual Energy history from REST API (strategy/usage) — None if unavailable
-        // Each entry is one lap's VE fraction (0.0–1.0). Last entry = current VE level.
-        ve_history: Option<Vec<f64>>,
-        // Whether this car supports VE.
-        // None = not yet determined.
-        ve_available: Option<bool>,
         /// World heading in degrees, 0 = North, clockwise positive (derived from mOri[2]).
         heading_deg: f64,
         /// The car is followed from the engineer seat, not driven on this PC:

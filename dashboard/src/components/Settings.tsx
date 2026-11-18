@@ -205,23 +205,6 @@ export default function Settings({ open, onClose }: Props) {
                 onChange={(v) => s.update({ fuelUnit: v as FuelUnit })}
               />
             </Row>
-            <Row label="Lap Reserve">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="number"
-                  value={s.lapReserve}
-                  min={0}
-                  max={5}
-                  step={0.25}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value)
-                    if (!isNaN(v) && v >= 0 && v <= 5) s.update({ lapReserve: v })
-                  }}
-                  style={{ ...inputStyle, width: 70 }}
-                />
-                <span style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted }}>laps</span>
-              </div>
-            </Row>
           </Section>
 
           {/* Connection */}

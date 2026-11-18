@@ -346,7 +346,7 @@ export default function WeatherWidget() {
   const weatherHistory     = useTelemetryStore((s) => s.weatherHistory)
   const scoringSessionTime = useTelemetryStore((s) => s.scoring.session_time)
   const sessionMinutes     = useTelemetryStore((s) => s.session.session_minutes)
-  const avgLapTime         = useTelemetryStore((s) => s.telemetry.fuel_avg_lap_time)
+  const avgLapTime         = useTelemetryStore((s) => s.strategy?.pace.ref_lap_s ?? 0)
   const toDisplayTemp      = useSettingsStore((s) => s.toDisplayTemp)
   const tempUnitLabel      = useSettingsStore((s) => s.tempUnitLabel)
   const weatherDetail      = useSettingsStore((s) => s.weatherDetail)
