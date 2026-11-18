@@ -15,7 +15,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $version = (Get-Content "$root\VERSION" -Raw).Trim()
 $cargo = (Select-String -Path "$root\bridge\Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' |
     Select-Object -First 1).Matches[0].Groups[1].Value
-if ($cargo -ne $version) { throw "VERSION is $version but bridge\Cargo.toml says $cargo: run scripts/bump-version.py" }
+if ($cargo -ne $version) { throw "VERSION is $version but bridge\Cargo.toml says ${cargo}: run scripts/bump-version.py" }
 Write-Host "LMU Pitwall $version"
 
 $iscc = @(
