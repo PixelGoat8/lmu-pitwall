@@ -21,6 +21,7 @@ mod post_race;
 mod protocol;
 mod race;
 mod recording;
+mod paths;
 mod session_kind;
 mod track_store;
 mod shared_memory;
@@ -1278,13 +1279,13 @@ async fn main() -> Result<()> {
 
     // Strategy engine: reads the broadcast stream (this bridge's, a replay's,
     // or on a hub the relayed driver's) and adds the plan to it.
-    tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx));
+    tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx, paths::root()));
     // Race events and lap history, from the same stream.
     tokio::spawn(race::run(ws.broadcaster().subscribe(), ws.broadcaster()));
     // Session history in SQLite, from the same stream.
-    tokio::spawn(history::run(ws.broadcaster().subscribe()));
+    tokio::spawn(history::run(ws.broadcaster().subscribe(), paths::root()));
     // AI engineer comments (off unless enabled and ANTHROPIC_API_KEY is set).
-    tokio::spawn(ai::run(ws.broadcaster().subscribe(), ws.broadcaster(), ai_rx));
+    tokio::spawn(ai::run(ws.broadcaster().subscribe(), ws.broadcaster(), ai_rx, paths::root()));
 
     // Optional recorder: one more subscriber on the broadcast channel.
     if let Some(path) = config.record.clone() {

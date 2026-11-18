@@ -311,8 +311,9 @@ pub fn apply(conn: &mut Connection, sid: &mut Option<i64>, ops: Vec<Op>) -> anyh
 }
 
 /// Run on a broadcast stream until it closes.
-pub async fn run(mut rx: broadcast::Receiver<Arc<ServerMessage>>) {
-    let db = match store::db() {
+/// Record the stream into the history database of `dir`.
+pub async fn run(mut rx: broadcast::Receiver<Arc<ServerMessage>>, dir: std::path::PathBuf) {
+    let db = match store::db(&dir) {
         Ok(db) => db,
         Err(e) => {
             warn!("History disabled: {:#}", e);
@@ -349,9 +350,10 @@ pub async fn run(mut rx: broadcast::Receiver<Arc<ServerMessage>>) {
 use crate::protocol::messages::ClientCommand;
 
 /// Answer a history command (called from a blocking task).
-pub fn handle_command(cmd: ClientCommand) -> ServerMessage {
+/// Answer a history command from the database of `dir`.
+pub fn handle_command(cmd: ClientCommand, dir: &std::path::Path) -> ServerMessage {
     let result = (|| -> anyhow::Result<ServerMessage> {
-        let db = store::db()?;
+        let db = store::db(dir)?;
         let conn = db.lock().map_err(|_| anyhow::anyhow!("history database busy"))?;
         Ok(match cmd {
             ClientCommand::HistoryList => ServerMessage::HistorySessions { sessions: store::list_sessions(&conn, 200)? },

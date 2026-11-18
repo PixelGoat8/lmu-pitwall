@@ -487,7 +487,7 @@ fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
 /// `tokio::task::spawn_blocking`.
 fn dispatch_command(cmd: ClientCommand) -> ServerMessage {
     if crate::history::is_history_command(&cmd) {
-        return crate::history::handle_command(cmd);
+        return crate::history::handle_command(cmd, &crate::paths::root());
     }
     if crate::track_store::is_track_command(&cmd) {
         return crate::track_store::handle_command(cmd);
