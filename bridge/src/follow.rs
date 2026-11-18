@@ -19,11 +19,7 @@ static FOLLOW: RwLock<Option<String>> = RwLock::new(None);
 static LOADED: std::sync::Once = std::sync::Once::new();
 
 fn path() -> PathBuf {
-    std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")).unwrap_or_else(|_| PathBuf::from(".")))
-        .join("LMUPitwall")
-        .join("follow.json")
+    crate::paths::root().join("follow.json")
 }
 
 fn load_once() {

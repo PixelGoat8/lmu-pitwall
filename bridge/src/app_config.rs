@@ -18,14 +18,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     fn config_path() -> PathBuf {
-        let base = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                std::env::var("HOME")
-                    .map(|h| PathBuf::from(h).join(".config"))
-                    .unwrap_or_else(|_| PathBuf::from("."))
-            });
-        base.join("LMUPitwall").join("config.json")
+        crate::paths::root().join("config.json")
     }
 
     pub fn load_or_create() -> Self {

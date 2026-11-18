@@ -1123,6 +1123,9 @@ async fn task_broadcaster(
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
     let config = Config::parse();
+    if let Some(dir) = &config.data_dir {
+        paths::set_root(dir.clone());
+    }
     let app_cfg = crate::app_config::AppConfig::load_or_create();
     // A hub has its own default port so it can run beside a bridge on the
     // same PC; the port saved in config.json belongs to the bridge.
@@ -1178,16 +1181,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    let log_dir = std::env::var("APPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                .unwrap_or_else(|| std::path::PathBuf::from("."))
-        })
-        .join("LMUPitwall")
-        .join("logs");
+    let log_dir = paths::root().join("logs");
 
     let _ = std::fs::create_dir_all(&log_dir);
     cleanup_old_logs(&log_dir, 7);

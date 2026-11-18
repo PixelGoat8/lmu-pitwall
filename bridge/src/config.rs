@@ -51,4 +51,10 @@ pub struct Config {
     /// Never exit on idle (default: exit after 10 minutes with no client and no game)
     #[arg(long, default_value_t = false)]
     pub keep_alive: bool,
+
+    /// Keep settings, history and logs in this folder instead of
+    /// %APPDATA%\LMUPitwall. For a second Pitwall on the same PC, e.g. the
+    /// engineer following two cars without the drivers' own Pitwalls.
+    #[arg(long, value_name = "FOLDER")]
+    pub data_dir: Option<std::path::PathBuf>,
 }
