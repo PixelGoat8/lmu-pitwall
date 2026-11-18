@@ -9,7 +9,7 @@
 
 ; Kept in step with bridge/Cargo.toml by scripts/bump-version.py.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.3.0"
+  #define MyAppVersion "1.3.1"
 #endif
 #ifndef ExeSource
   #define ExeSource "..\bridge\target\release\lmu-pitwall.exe"

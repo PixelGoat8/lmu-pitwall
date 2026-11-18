@@ -8,6 +8,7 @@ import PostRaceResults from './components/PostRaceResults'
 import FuelCalculator from './components/FuelCalculator'
 import HistoryPanel from './components/HistoryPanel'
 import { useSettingsStore } from './stores/settingsStore'
+import { useTeamStore } from './stores/teamStore'
 
 export default function App() {
   useWebSocket()
@@ -16,6 +17,13 @@ export default function App() {
   const [fuelOpen, setFuelOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const updateSettings = useSettingsStore((s) => s.update)
+  // A new team means a new car: widgets start over instead of carrying what
+  // they remembered about the previous one.
+  const team = useTeamStore((s) => s.team)
+  const teamName = useTeamStore((s) => (s.teams.length > 1 ? s.teams.find((t) => t.id === s.current)?.name : undefined))
+  useEffect(() => {
+    document.title = teamName ? `${teamName} · LMU Pitwall` : 'LMU Pitwall'
+  }, [teamName])
 
   // Restore fullscreen on mount
   useEffect(() => {
@@ -68,12 +76,12 @@ export default function App() {
         fuelOpen={fuelOpen}
       />
       {historyOpen
-        ? <HistoryPanel onClose={() => setHistoryOpen(false)} />
+        ? <HistoryPanel key={team} onClose={() => setHistoryOpen(false)} />
         : resultsOpen
         ? <PostRaceResults onClose={() => setResultsOpen(false)} />
         : fuelOpen
           ? <FuelCalculator onClose={() => setFuelOpen(false)} />
-          : <WidgetGrid />
+          : <WidgetGrid key={team} />
       }
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

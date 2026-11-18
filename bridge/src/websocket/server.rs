@@ -278,6 +278,12 @@ async fn handle_client(
                     info!("Client {} timed out (silent for {:?})", peer, last_seen.elapsed());
                     break;
                 }
+                // Its team was deleted on the hub: let the dashboard reconnect
+                // and land on a team that exists.
+                if !teams.read().map(|t| t.iter().any(|x| x.id == team.id)).unwrap_or(true) {
+                    info!("Client {}: team {} is gone, closing", peer, team.id);
+                    break;
+                }
                 let server_time_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
