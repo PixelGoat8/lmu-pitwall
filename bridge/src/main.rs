@@ -21,7 +21,6 @@ mod pit_api;
 mod post_race;
 mod protocol;
 mod race;
-mod race_engineer;
 mod recording;
 mod rest_api;
 mod session_kind;
@@ -39,7 +38,7 @@ use anyhow::Result;
 use clap::Parser;
 use tokio::sync::{RwLock, watch};
 use tokio::time::MissedTickBehavior;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use config::Config;
 use electronics::ElectronicsSnapshot;
@@ -989,7 +988,6 @@ async fn task_broadcaster(
     telemetry_fps: u32,
     scoring_fps: u32,
     all_drivers_tx: tokio::sync::watch::Sender<Option<ServerMessage>>,
-    engineer_service: Arc<race_engineer::RaceEngineerService>,
 ) {
     let tel_interval         = Duration::from_millis(1000 / telemetry_fps.max(1) as u64);
     let scoring_interval     = Duration::from_millis(1000 / scoring_fps.max(1) as u64);
@@ -1012,11 +1010,6 @@ async fn task_broadcaster(
     let mut fuel_snapshot = FuelSnapshot::default();
     let mut fuel_session_key = String::new();
 
-    // Template registry for rule-fired TTS synthesis.
-    let engineer_templates = race_engineer::rules::templates::TemplateRegistry::new();
-    // Audio broadcast sender — only audio-role clients receive EngineerAudio.
-    let audio_broadcaster = ws.audio_broadcaster();
-
     // All-drivers lap snapshot tracker.
     let mut lap_tracker = LapTracker::new();
 
@@ -1024,8 +1017,6 @@ async fn task_broadcaster(
     // it, so this is the only record of a multiplayer stint's consumption.
     let mut live_lap_recorder = post_race::live_laps::LiveLapRecorder::new();
 
-    // Race engineer 10 Hz throttle.
-    let mut last_engineer_tick = Instant::now() - Duration::from_millis(100);
     let mut had_drivers_snapshot = false;
 
     // Tick at 2× the fastest rate so we never miss a window.
@@ -1263,126 +1254,6 @@ async fn task_broadcaster(
                 let _ = all_drivers_tx.send(Some(all_drivers_msg));
             }
         }
-
-        // --- Race engineer 10 Hz tick ---
-        if now.duration_since(last_engineer_tick) >= Duration::from_millis(100) {
-            last_engineer_tick = now;
-
-            let s = state.read().await;
-            if s.is_connected {
-                // Same substitute as in build_vehicle_status: full course
-                // yellow is what LMU_Data can tell us about a caution.
-                let safety_car_active = s.scoring.as_ref()
-                    .map(|sc| sc.mScoringInfo.mGamePhase == GAME_PHASE_FULL_COURSE_YELLOW)
-                    .unwrap_or(false);
-                let ve_available = s.ve_available;
-
-                let mut aggregator = engineer_service.aggregator.lock().await;
-                let current = aggregator.build_state(
-                    s.scoring.as_ref(),
-                    s.telemetry.as_ref(),
-                    &fuel_snapshot,
-                    safety_car_active,
-                    ve_available,
-                    &s.weather_forecast,
-                );
-                drop(s); // release read lock before dispatcher
-
-                let prev = aggregator.previous().cloned();
-                let mut dispatcher = engineer_service.dispatcher.lock().await;
-                let events = dispatcher.tick(&current, prev.as_ref());
-                let active_voice = dispatcher.behavior.active_voice.clone();
-                let mute_name = dispatcher.behavior.mute_name;
-                let pilot_name = if mute_name {
-                    None
-                } else {
-                    dispatcher.behavior.pilot_name.clone()
-                };
-                debug!(
-                    "Engineer tick: pilot={:?} mute_name={mute_name} events={}",
-                    pilot_name,
-                    events.len()
-                );
-                drop(dispatcher);
-
-                aggregator.advance(current);
-                drop(aggregator);
-
-                // TTS synthesis for rule-fired events.
-                for mut event in events {
-                    if let Some(ref name) = pilot_name {
-                        event.params = event.params.set("driver_name", name.clone());
-                    }
-                    let text = match engineer_templates.render(event.template_key, &event.params) {
-                        Some(t) => t,
-                        None => {
-                            warn!(
-                                "Engineer: unknown template key '{}' for rule '{}'",
-                                event.template_key, event.rule_id
-                            );
-                            continue;
-                        }
-                    };
-
-                    let voice_id = match active_voice.clone() {
-                        Some(v) => v,
-                        None => {
-                            warn!(
-                                "Engineer: no active voice set — dropping event rule='{}'",
-                                event.rule_id
-                            );
-                            continue;
-                        }
-                    };
-
-                    info!(
-                        "Processing event: rule={} text={}",
-                        event.rule_id, text
-                    );
-
-                    let priority_str = event.priority.as_str().to_string();
-                    let rule_id = event.rule_id;
-                    let svc = engineer_service.clone();
-                    let audio_tx = audio_broadcaster.clone();
-
-                    tokio::spawn(async move {
-                        use crate::race_engineer::audio::{pcm_to_wav, wav_to_base64};
-                        use crate::race_engineer::tts_engine::{SynthesisRequest, TtsError};
-
-                        let req = SynthesisRequest {
-                            text: text.clone(),
-                            voice_id,
-                        };
-                        let mut engine = svc.engine.lock().await;
-                        match engine.synthesize(req).await {
-                            Ok(result) => {
-                                let wav = pcm_to_wav(&result.pcm, result.sample_rate);
-                                let wav_base64 = wav_to_base64(&wav);
-                                let n = audio_tx.receiver_count();
-                                info!("Engineer audio broadcast to {n} audio clients");
-                                let _ = audio_tx.send(Arc::new(ServerMessage::EngineerAudio {
-                                    request_id: format!("rule_{rule_id}"),
-                                    priority: priority_str,
-                                    wav_base64,
-                                    sample_rate: result.sample_rate,
-                                    duration_ms: result.duration_ms,
-                                    text,
-                                }));
-                            }
-                            Err(TtsError::VoiceNotInstalled(id)) => {
-                                warn!("Engineer synthesis failed (rule={rule_id}): voice not installed: {id}");
-                            }
-                            Err(TtsError::PiperNotInstalled) => {
-                                warn!("Engineer synthesis failed (rule={rule_id}): piper not installed");
-                            }
-                            Err(e) => {
-                                warn!("Engineer synthesis failed (rule={rule_id}): {e}");
-                            }
-                        }
-                    });
-                }
-            }
-        }
     }
 }
 
@@ -1533,7 +1404,6 @@ async fn main() -> Result<()> {
         ));
 
     let state = Arc::new(RwLock::new(TelemetryState::new()));
-    let engineer_service = Arc::new(race_engineer::RaceEngineerService::new());
     let game_status_rx = connection_status_rx.clone();
     let (hub_tx, hub_rx) = tokio::sync::mpsc::unbounded_channel();
     let (strategy_tx, strategy_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1543,7 +1413,6 @@ async fn main() -> Result<()> {
         all_drivers_rx,
         version_info_rx,
         connection_status_rx,
-        engineer_service.clone(),
         access.clone(),
         config.hub.then_some(hub_tx),
         strategy_tx,
@@ -1605,9 +1474,8 @@ async fn main() -> Result<()> {
         let ws              = ws.clone();
         let tel_fps         = config.telemetry_fps;
         let scoring_fps     = config.scoring_fps;
-        let engineer_svc    = engineer_service.clone();
         tokio::spawn(async move {
-            task_broadcaster(state, ws, tel_fps, scoring_fps, all_drivers_tx, engineer_svc).await
+            task_broadcaster(state, ws, tel_fps, scoring_fps, all_drivers_tx).await
         });
     }
     } // end of live (non-replay) tasks

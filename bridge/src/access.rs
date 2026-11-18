@@ -8,7 +8,7 @@
 //!   browser on the racing PC itself. No token needed, full control.
 //! * **Remote** — everything else. Must present the access token, and gets
 //!   the data stream but none of the commands that change the racing PC
-//!   (shut down, change port, download voices, read arbitrary folders).
+//!   (shut down, change port, delete history, read arbitrary folders).
 //!
 //! The token is generated on first run and stored in `config.json`. The local
 //! dashboard shows it as a ready-made link the driver sends to the engineer.

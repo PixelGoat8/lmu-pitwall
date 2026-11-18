@@ -18,9 +18,8 @@ The bridge sorts callers by where the TCP connection comes from:
 - WebSocket: `ws://HOST:9000/?token=TOKEN`. Without a valid token the
   handshake is refused with HTTP 401.
 - HTTP API: `?token=TOKEN` or `Authorization: Bearer TOKEN`.
-- Local-only WebSocket commands: `engineer_install_piper`,
-  `engineer_install_voice`, `engineer_uninstall_voice`, and `post_race_init`
-  with a custom `results_path`. A remote client gets `EngineerError` or
+- Local-only WebSocket commands: `history_delete`, and `post_race_init` with
+  a custom `results_path`. A remote client gets `HistoryError` or
   `PostRaceError` back.
 - The token is generated on first run and stored in
   `%APPDATA%\LMUPitwall\config.json`; `--token` and `LMU_PITWALL_TOKEN` override it.
@@ -117,7 +116,7 @@ check, which means a game update moved the wheel block inside
 Consumers must treat the tire block in `Telemetry` as unusable while
 `telemetry_valid` is `false` — the bridge keeps sending it rather than dropping
 fields, so the flag is the only signal. In this repo: `TireMonitor` greys the
-cells out, and the race engineer's tire rules stay silent.
+cells out.
 
 ### `Heartbeat` (every 2 s)
 

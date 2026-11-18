@@ -19,7 +19,6 @@ use crate::fuel_calculator::api::handle_command as fuel_handle;
 use crate::hub::HubCommand;
 use crate::post_race::api::handle_command as post_race_handle;
 use crate::protocol::messages::{ClientCommand, ServerMessage};
-use crate::race_engineer::{self, RaceEngineerService};
 
 /// Broadcast channel capacity — number of queued messages per slow client
 /// before older messages are dropped (lagged receiver).
@@ -50,13 +49,9 @@ pub enum Format {
 ///
 /// Accepts clients on `ws://0.0.0.0:<port>` and fans out every
 /// [`ServerMessage`] sent via [`broadcast`] to all connected clients.
-/// `EngineerAudio` messages use a separate `audio_tx` channel so that clients
-/// registered as `display_only` never receive large WAV payloads.
 pub struct WebSocketServer {
     port: u16,
     tx: broadcast::Sender<Arc<ServerMessage>>,
-    /// Audio-only channel — only `EngineerAudio` messages are sent here.
-    audio_tx: broadcast::Sender<Arc<ServerMessage>>,
     /// Live count of connected WebSocket clients.
     client_count: Arc<AtomicUsize>,
     /// Watch channel — subscribers receive the new count on every change.
@@ -67,7 +62,6 @@ pub struct WebSocketServer {
     version_info_rx: watch::Receiver<Option<ServerMessage>>,
     /// Latest ConnectionStatus — sent immediately to newly connecting clients.
     connection_status_rx: watch::Receiver<Option<ServerMessage>>,
-    engineer_service: Arc<RaceEngineerService>,
     access: Arc<Access>,
     /// Where hub commands go; `None` on an ordinary bridge.
     hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
@@ -83,25 +77,21 @@ impl WebSocketServer {
         all_drivers_rx: watch::Receiver<Option<ServerMessage>>,
         version_info_rx: watch::Receiver<Option<ServerMessage>>,
         connection_status_rx: watch::Receiver<Option<ServerMessage>>,
-        engineer_service: Arc<RaceEngineerService>,
         access: Arc<Access>,
         hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
         strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
         ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
     ) -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        let (audio_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         let (count_tx, _) = watch::channel(0usize);
         WebSocketServer {
             port,
             tx,
-            audio_tx,
             client_count: Arc::new(AtomicUsize::new(0)),
             count_tx,
             all_drivers_rx,
             version_info_rx,
             connection_status_rx,
-            engineer_service,
             access,
             hub_tx,
             strategy_tx,
@@ -123,12 +113,6 @@ impl WebSocketServer {
         self.tx.clone()
     }
 
-    /// Returns a cloned sender for audio-only broadcast (EngineerAudio messages).
-    /// Only clients registered as `audio` role receive from this channel.
-    pub fn audio_broadcaster(&self) -> broadcast::Sender<Arc<ServerMessage>> {
-        self.audio_tx.clone()
-    }
-
     /// Send a message to every connected client.
     pub fn broadcast(&self, msg: ServerMessage) -> usize {
         match self.tx.send(Arc::new(msg)) {
@@ -141,7 +125,6 @@ impl WebSocketServer {
     pub fn accept_client(&self, stream: TcpStream, peer: SocketAddr) {
         debug!("New WebSocket connection from {}", peer);
         let rx = self.tx.subscribe();
-        let audio_rx = self.audio_tx.subscribe();
 
         // The client is counted only once its handshake has been accepted
         // (see `handle_client`): a refused connection must neither keep the
@@ -150,15 +133,11 @@ impl WebSocketServer {
             stream,
             peer,
             rx,
-            audio_rx,
             self.client_count.clone(),
             self.count_tx.clone(),
             self.all_drivers_rx.clone(),
             self.version_info_rx.clone(),
             self.connection_status_rx.clone(),
-            self.tx.clone(),
-            self.audio_tx.clone(),
-            self.engineer_service.clone(),
             self.access.clone(),
             self.hub_tx.clone(),
             self.strategy_tx.clone(),
@@ -175,22 +154,16 @@ async fn handle_client(
     stream: TcpStream,
     peer: SocketAddr,
     mut rx: broadcast::Receiver<Arc<ServerMessage>>,
-    mut audio_rx: broadcast::Receiver<Arc<ServerMessage>>,
     client_count: Arc<AtomicUsize>,
     count_tx: watch::Sender<usize>,
     all_drivers_rx: watch::Receiver<Option<ServerMessage>>,
     version_info_rx: watch::Receiver<Option<ServerMessage>>,
     connection_status_rx: watch::Receiver<Option<ServerMessage>>,
-    ws_broadcaster: broadcast::Sender<Arc<ServerMessage>>,
-    _audio_broadcaster: broadcast::Sender<Arc<ServerMessage>>,
-    engineer_service: Arc<RaceEngineerService>,
     access: Arc<Access>,
     hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
     strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
     ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
 ) {
-    // Default role is audio — this device plays engineer callouts.
-    let mut is_audio = true;
     let is_json = Arc::new(AtomicBool::new(false));
     let is_json_cb = is_json.clone();
     let level_flag = Arc::new(AtomicU8::new(LEVEL_NONE));
@@ -338,38 +311,6 @@ async fn handle_client(
                 }
             }
 
-            // Audio-only channel: only forwarded to clients with `audio` role.
-            audio_result = audio_rx.recv() => {
-                if is_audio {
-                    match audio_result {
-                        Ok(msg) => {
-                            match serialize(&msg, fmt) {
-                                Ok(ws_msg) => {
-                                    if let Err(e) = sink.send(ws_msg).await {
-                                        debug!("Send audio to {} failed: {}", peer, e);
-                                        break;
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("Audio serialization error for {}: {}", peer, e);
-                                }
-                            }
-                        }
-                        Err(broadcast::error::RecvError::Lagged(dropped)) => {
-                            warn!("Client {} audio too slow, dropped {}", peer, dropped);
-                        }
-                        Err(broadcast::error::RecvError::Closed) => {
-                            break;
-                        }
-                    }
-                } else {
-                    // display_only: drain audio_rx without forwarding.
-                    if let Err(broadcast::error::RecvError::Closed) = audio_result {
-                        break;
-                    }
-                }
-            }
-
             // Inbound: dispatch text commands; close and drop everything else.
             frame = incoming.next() => {
                 if matches!(frame, Some(Ok(_))) {
@@ -387,16 +328,6 @@ async fn handle_client(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientCommand>(&text) {
                             Ok(cmd) => {
-                                // Per-client role registration — handled locally.
-                                if let ClientCommand::EngineerRegisterClientRole { ref role } = cmd {
-                                    is_audio = role != "display_only";
-                                    info!(
-                                        "Client {} registered as {} (is_audio={})",
-                                        peer, role, is_audio
-                                    );
-                                    continue;
-                                }
-
                                 // Strategy settings: the engine answers with a
                                 // fresh StrategyUpdate to everyone.
                                 if let ClientCommand::FollowCar { car_name } = cmd {
@@ -464,48 +395,29 @@ async fn handle_client(
                                     continue;
                                 }
 
-                                let is_engineer = matches!(
-                                    cmd,
-                                    ClientCommand::EngineerGetStatus
-                                        | ClientCommand::EngineerInstallPiper
-                                        | ClientCommand::EngineerInstallVoice { .. }
-                                        | ClientCommand::EngineerUninstallVoice { .. }
-                                        | ClientCommand::EngineerSynthesize { .. }
-                                        | ClientCommand::EngineerUpdateBehavior { .. }
-                                );
-
-                                if is_engineer {
-                                    let svc = engineer_service.clone();
-                                    let bcast = ws_broadcaster.clone();
-                                    let audio_bcast = _audio_broadcaster.clone();
-                                    tokio::spawn(async move {
-                                        race_engineer::api::handle_command(cmd, svc, bcast, audio_bcast).await;
-                                    });
-                                } else {
-                                    let response = tokio::task::spawn_blocking(move || {
-                                        dispatch_command(cmd)
-                                    })
-                                    .await;
-                                    match response {
-                                        Ok(msg) => {
-                                            match serialize(&msg, fmt) {
-                                                Ok(ws_msg) => {
-                                                    if let Err(e) = sink.send(ws_msg).await {
-                                                        debug!("Send to {} failed: {}", peer, e);
-                                                        break;
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    warn!(
-                                                        "Serialization error for {}: {}",
-                                                        peer, e
-                                                    );
+                                let response = tokio::task::spawn_blocking(move || {
+                                    dispatch_command(cmd)
+                                })
+                                .await;
+                                match response {
+                                    Ok(msg) => {
+                                        match serialize(&msg, fmt) {
+                                            Ok(ws_msg) => {
+                                                if let Err(e) = sink.send(ws_msg).await {
+                                                    debug!("Send to {} failed: {}", peer, e);
+                                                    break;
                                                 }
                                             }
+                                            Err(e) => {
+                                                warn!(
+                                                    "Serialization error for {}: {}",
+                                                    peer, e
+                                                );
+                                            }
                                         }
-                                        Err(e) => {
-                                            warn!("Post-race task panicked for {}: {}", peer, e);
-                                        }
+                                    }
+                                    Err(e) => {
+                                        warn!("Post-race task panicked for {}: {}", peer, e);
                                     }
                                 }
                             }
@@ -542,14 +454,10 @@ const LEVEL_NONE: u8 = 0;
 const LEVEL_LOCAL: u8 = 1;
 const LEVEL_REMOTE: u8 = 2;
 
-/// Commands a remote client may not send: they download and install programs
-/// on the racing PC, delete files there, or make the bridge read a folder of
-/// the caller's choosing.
+/// Commands a remote client may not send: they delete files on the racing PC,
+/// or make the bridge read a folder of the caller's choosing.
 fn is_local_only(cmd: &ClientCommand) -> bool {
     match cmd {
-        ClientCommand::EngineerInstallPiper
-        | ClientCommand::EngineerInstallVoice { .. }
-        | ClientCommand::EngineerUninstallVoice { .. } => true,
         ClientCommand::PostRaceInit { results_path } => {
             results_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false)
         }
@@ -563,9 +471,8 @@ fn is_local_only(cmd: &ClientCommand) -> bool {
 fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
     let message = "This action is only available on the racing PC itself.".to_string();
     match cmd {
-        ClientCommand::PostRaceInit { .. } => ServerMessage::PostRaceError { message },
         ClientCommand::HistoryDelete { .. } => ServerMessage::HistoryError { message },
-        _ => ServerMessage::EngineerError { message },
+        _ => ServerMessage::PostRaceError { message },
     }
 }
 
@@ -616,9 +523,6 @@ mod tests {
 
     #[test]
     fn installs_and_custom_paths_are_local_only() {
-        assert!(is_local_only(&ClientCommand::EngineerInstallPiper));
-        assert!(is_local_only(&ClientCommand::EngineerInstallVoice { voice_id: "x".into() }));
-        assert!(is_local_only(&ClientCommand::EngineerUninstallVoice { voice_id: "x".into() }));
         assert!(is_local_only(&ClientCommand::PostRaceInit {
             results_path: Some("C:\\Users".into())
         }));
@@ -629,7 +533,6 @@ mod tests {
         assert!(!is_local_only(&ClientCommand::PostRaceInit { results_path: None }));
         assert!(!is_local_only(&ClientCommand::PostRaceInit { results_path: Some("  ".into()) }));
         assert!(!is_local_only(&ClientCommand::PostRaceSessionDetail { session_id: 1 }));
-        assert!(!is_local_only(&ClientCommand::EngineerGetStatus));
         assert!(!is_local_only(&ClientCommand::FuelCalcInit));
     }
 }

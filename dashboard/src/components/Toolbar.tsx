@@ -300,16 +300,14 @@ function ConnectionBadge() {
   )
 }
 
-export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onOpenEngineer, onOpenHistory, historyOpen, resultsOpen, fuelOpen, engineerOpen }: {
+export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onOpenHistory, historyOpen, resultsOpen, fuelOpen }: {
   onOpenHistory: () => void
   historyOpen: boolean
   onOpenSettings: () => void
   onOpenResults: () => void
   onOpenFuel: () => void
-  onOpenEngineer: () => void
   resultsOpen: boolean
   fuelOpen: boolean
-  engineerOpen: boolean
 }) {
   const { activePreset, locked, setPreset, resetToDefault, toggleLock, addWidget } = useLayoutStore()
   const fullscreen = useSettingsStore((s) => s.fullscreen)
@@ -415,9 +413,6 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
 
       {/* Spacer */}
       <div style={{ flex: 1 }} />
-
-      {/* Race Engineer */}
-      <ToolbarBtn onClick={onOpenEngineer} title="Race Engineer" active={engineerOpen}>🎙</ToolbarBtn>
 
       {/* Fuel Calculator */}
       <ToolbarBtn onClick={onOpenFuel} title="Fuel Calculator" active={fuelOpen}>⛽</ToolbarBtn>

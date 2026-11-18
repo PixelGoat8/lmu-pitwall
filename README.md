@@ -89,7 +89,7 @@ machine the bridge asks for an **access token**, generated on first run:
 2. Open the link on the other device. The browser remembers the token.
 
 Remote clients can watch but not control the racing PC: shutting the bridge
-down, changing its port and installing voices only work locally. The bridge
+down, changing its port and deleting history only work locally. The bridge
 stays up for as long as the game is running, and exits after 10 minutes with
 no client and no game (`--keep-alive` disables that). Details and
 troubleshooting: [docs/accesso-remoto.md](docs/accesso-remoto.md); wire
@@ -162,7 +162,6 @@ The dashboard auto-connects and updates in real time. On first run, Windows Fire
 | **Rivals** | Our recent laps next to the class rivals ahead and behind and the class leader, lap by lap |
 | **Race events** | Full course yellow, pit lane open/closed, pit stops in our class, penalties, driver changes, position changes, impacts, best laps |
 | **AI engineer** | Short comments from Claude for the engineer, from the computed state only; any comment with a number not in the data is withheld. Off by default, with a daily budget. See [docs/ai.md](docs/ai.md) |
-| **Race Engineer** | Spoken callouts during practice, qualifying, and race: tire wear warnings, weather escalations, pace deltas, fuel status, flag alerts |
 | **Strategy** | Live plan recomputed every lap: fuel and virtual energy use (median, trend), laps to go, energy to the finish, stops and pit window, a "box in N laps" table with amounts and stop time from the game's own pit times, tyre wear and pace trend with the new-tyres trade-off, pit lane loss measured per track, rain outlook from the forecast. Works on a hub across driver swaps. Plus the Fuel Calculator for pre-race planning, preselecting the track and car of the session in progress |
 | **Track Map** | Live positions of the whole field, drawn smoothly at your display's refresh rate, on an outline recorded from one clean lap. Sector segments with start/finish and sector lines, local yellows on the sector they apply to, track and sector lengths, elevation range, climb per lap and an elevation profile |
 | **Weather** | Current and forecast conditions |
