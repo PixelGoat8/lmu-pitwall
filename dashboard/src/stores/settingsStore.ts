@@ -25,7 +25,6 @@ export interface SettingsState {
   tempUnit: TempUnit
   pressureUnit: PressureUnit
   fuelUnit: FuelUnit
-  lapReserve: number   // extra laps of fuel added to refuel estimate (e.g. 0.5)
   wsHost: string       // empty = auto (window.location.hostname)
   wsPort: number
   // Access token for a bridge on another machine. Empty on the racing PC
@@ -95,7 +94,6 @@ export const SETTINGS_DEFAULTS: SettingsState = {
   tempUnit: 'celsius',
   pressureUnit: 'bar',
   fuelUnit: 'liters',
-  lapReserve: 0.5,
   wsHost: '',
   wsPort: 0,
   bridgeToken: '',
@@ -149,12 +147,12 @@ export const useSettingsStore = create<SettingsStore>()(
       reset: () => set(SETTINGS_DEFAULTS),
 
       exportSettings: () => {
-        const { speedUnit, tempUnit, pressureUnit, fuelUnit, lapReserve, wsHost, wsPort, primaryColor, accentColor, fpsLimit, inputChartFps,
+        const { speedUnit, tempUnit, pressureUnit, fuelUnit, wsHost, wsPort, primaryColor, accentColor, fpsLimit, inputChartFps,
           timeWidgetShowComputerTime, timeWidgetClockFormat, timeWidgetShowSessionElapsed, timeWidgetShowTimeRemaining, timeWidgetShowCurrentLap,
           standingsShowCompound, standingsShowCarType, standingsShowVE, standingsShowDamage, standingsClassFilter, standingsGapMode,
           battleMode, battleValueMode, battleCount, battleShowPosName, battleShowSectors, battleShowLaps, battleShowGap, tyreColdBelowC, tyreHotAboveC, damageDetail, weatherDetail, trackMapDetail, resultsPath,
           postRaceSortCol, postRaceSortDir } = get()
-        return JSON.stringify({ speedUnit, tempUnit, pressureUnit, fuelUnit, lapReserve, wsHost, wsPort, primaryColor, accentColor, fpsLimit, inputChartFps,
+        return JSON.stringify({ speedUnit, tempUnit, pressureUnit, fuelUnit, wsHost, wsPort, primaryColor, accentColor, fpsLimit, inputChartFps,
           timeWidgetShowComputerTime, timeWidgetClockFormat, timeWidgetShowSessionElapsed, timeWidgetShowTimeRemaining, timeWidgetShowCurrentLap,
           standingsShowCompound, standingsShowCarType, standingsShowVE, standingsShowDamage, standingsClassFilter, standingsGapMode,
           battleMode, battleValueMode, battleCount, battleShowPosName, battleShowSectors, battleShowLaps, battleShowGap, tyreColdBelowC, tyreHotAboveC, damageDetail, weatherDetail, trackMapDetail, resultsPath,
@@ -169,7 +167,6 @@ export const useSettingsStore = create<SettingsStore>()(
           if (data.tempUnit === 'celsius' || data.tempUnit === 'fahrenheit') valid.tempUnit = data.tempUnit
           if (data.pressureUnit === 'bar' || data.pressureUnit === 'psi') valid.pressureUnit = data.pressureUnit
           if (data.fuelUnit === 'liters' || data.fuelUnit === 'gallons') valid.fuelUnit = data.fuelUnit
-          if (typeof data.lapReserve === 'number' && data.lapReserve >= 0 && data.lapReserve <= 5) valid.lapReserve = data.lapReserve
           if (typeof data.wsHost === 'string') valid.wsHost = data.wsHost
           if (typeof data.wsPort === 'number' && data.wsPort >= 0 && data.wsPort < 65536) valid.wsPort = data.wsPort
           if (typeof data.primaryColor === 'string') valid.primaryColor = data.primaryColor

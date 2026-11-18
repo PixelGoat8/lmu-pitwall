@@ -89,7 +89,7 @@ machine the bridge asks for an **access token**, generated on first run:
 2. Open the link on the other device. The browser remembers the token.
 
 Remote clients can watch but not control the racing PC: shutting the bridge
-down, changing its port and installing voices only work locally. The bridge
+down, changing its port and deleting history only work locally. The bridge
 stays up for as long as the game is running, and exits after 10 minutes with
 no client and no game (`--keep-alive` disables that). Details and
 troubleshooting: [docs/accesso-remoto.md](docs/accesso-remoto.md); wire
@@ -162,7 +162,6 @@ The dashboard auto-connects and updates in real time. On first run, Windows Fire
 | **Rivals** | Our recent laps next to the class rivals ahead and behind and the class leader, lap by lap |
 | **Race events** | Full course yellow, pit lane open/closed, pit stops in our class, penalties, driver changes, position changes, impacts, best laps |
 | **AI engineer** | Short comments from Claude for the engineer, from the computed state only; any comment with a number not in the data is withheld. Off by default, with a daily budget. See [docs/ai.md](docs/ai.md) |
-| **Race Engineer** | Spoken callouts during practice, qualifying, and race: tire wear warnings, weather escalations, pace deltas, fuel status, flag alerts |
 | **Strategy** | Live plan recomputed every lap: fuel and virtual energy use (median, trend), laps to go, energy to the finish, stops and pit window, a "box in N laps" table with amounts and stop time from the game's own pit times, tyre wear and pace trend with the new-tyres trade-off, pit lane loss measured per track, rain outlook from the forecast. Works on a hub across driver swaps. Plus the Fuel Calculator for pre-race planning, preselecting the track and car of the session in progress |
 | **Track Map** | Live positions of the whole field, drawn smoothly at your display's refresh rate, on an outline recorded from one clean lap. Sector segments with start/finish and sector lines, local yellows on the sector they apply to, track and sector lengths, elevation range, climb per lap and an elevation profile |
 | **Weather** | Current and forecast conditions |
@@ -180,8 +179,9 @@ Widget layout is drag-and-drop; positions and sizes are saved automatically.
 Le Mans Ultimate (Windows)
 ├── LMU_Data shared memory  (100 Hz telemetry, 5 Hz scoring)
 └── REST API  :6397
-    ├── GET /rest/strategy/usage                        (Virtual Energy history)
-    └── GET /rest/garage/UIScreen/RepairAndRefuel       (wearables: aero, brakes, suspension)
+    ├── GET /rest/garage/UIScreen/RepairAndRefuel       (wearables, pit menu, pit times)
+    ├── GET /rest/strategy/pitstop-estimate             (the game's own stop estimate)
+    └── GET /rest/sessions/weather                      (forecast)
 
 lmu-pitwall.exe (Rust, single binary)
 ├── Shared Memory reader ──────────────────────────────► WebSocket server :9000
@@ -204,67 +204,19 @@ A single port handles both WebSocket upgrades and static file serving. The React
 
 ## Building from Source
 
-**Environment:** Bazzite (Fedora Atomic) or any Fedora-based system. A [distrobox](https://github.com/89luca89/distrobox) container works well for keeping the toolchain isolated.
-
-**One-time setup:**
-
-```bash
-# Rust toolchain
-curl https://sh.rustup.rs -sSf | sh
-rustup target add x86_64-pc-windows-gnu
-
-# cargo-zigbuild (cross-compilation, no MinGW needed)
-cargo install cargo-zigbuild
-# Zig 0.13+: https://ziglang.org/download/ or via dnf/distrobox
-
-# Node.js — use system package manager or https://nodejs.org
-cd dashboard && npm install && cd ..
-```
-
-**Build and release:**
-
-```bash
-./scripts/release.sh
-```
-
-This script bumps the patch version, builds the React dashboard, cross-compiles the Rust backend to `x86_64-pc-windows-gnu` via `cargo zigbuild`, assembles `dist/`, and starts a local HTTP server so the `.exe` can be downloaded directly from a Windows machine on the same network.
-
-**Script options:**
-
-| Flag | Effect |
-|------|--------|
-| `--no-bump` | Skip version bump |
-| `--no-serve` | Skip HTTP server after build |
-| `--no-installer` | Skip Inno Setup installer build |
-| `--port 8080` | HTTP server port (default: 8080) |
-
-**Installer build (one-time setup):**
-
-To produce `LMU-Pitwall-Setup-X.X.X.exe`, install Wine and Inno Setup 6 once:
-
-```bash
-sudo dnf install wine
-./scripts/install-innosetup.sh
-```
-
-After that, `release.sh` automatically builds both the standalone `.exe` and the installer.
-
-**Building on Windows (no cross-compilation):**
-
-Needs [rustup](https://rustup.rs) with the default MSVC toolchain, the Visual
-Studio Build Tools (C++ workload) and Node.js.
+On Windows, with [rustup](https://rustup.rs) (default MSVC toolchain), the
+Visual Studio Build Tools (C++ workload) and Node.js — the exact `winget`
+commands are in [CONTRIBUTING.md](CONTRIBUTING.md):
 
 ```powershell
 cd dashboard; npm ci; npm run build; cd ..
 cd bridge; cargo test; cargo build --release
-# -> bridge\target\release\lmu-pitwall.exe (dashboard embedded)
+# -> bridge\target\release\lmu-pitwall.exe (dashboard and icon embedded)
 ```
 
 Build the dashboard first: the bridge embeds `dashboard/dist` at compile time.
-Without Zig the icon embedding step is skipped with a warning; the binary
-works, it just has no icon.
 
-**Installer on Windows:** with [Inno Setup 6](https://jrsoftware.org/isdl.php)
+**Installer:** with [Inno Setup 6](https://jrsoftware.org/isdl.php)
 (`winget install JRSoftware.InnoSetup`), one command builds the dashboard, the
 bridge and the installer:
 
@@ -273,8 +225,8 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1
 # -> installer\Output\LMU-Pitwall-Setup-<version>.exe
 ```
 
-The version comes from `bridge/Cargo.toml`. `release.sh` builds the same
-installer through Wine.
+The version comes from `VERSION`; `python scripts/bump-version.py` (`--minor`,
+`--major`) moves it everywhere at once.
 
 ## Tech Stack
 
@@ -282,9 +234,8 @@ installer through Wine.
 |-------|-----------|
 | Backend | Rust — shared memory reader, WebSocket server, REST API client |
 | Frontend | React + TypeScript — widget-based layout with drag & drop |
-| Cross-compilation | `cargo-zigbuild` — Windows `.exe` from Linux, no MinGW required |
 | Static embedding | `rust-embed` — React bundle baked into the binary |
-| Installer | Inno Setup 6 via Wine |
+| Installer | Inno Setup 6 (`installer/build.ps1`) |
 | LMU data sources | `LMU_Data` shared memory (100 Hz telemetry / 5 Hz scoring) + LMU REST API port 6397 |
 
 ## Design
@@ -298,13 +249,8 @@ installer through Wine.
 
 ## Contributing
 
-PRs are welcome. For larger changes, open an issue first to align on scope.
-
-**Workflow:**
-
-1. Fork the repo and create a feature branch off `main`
-2. Build and verify: `./scripts/release.sh --no-bump --no-serve --no-installer`
-3. Open a PR against `main` with a clear description of what and why
+See [CONTRIBUTING.md](CONTRIBUTING.md) (in Italian): setup, trying changes
+without the game, and the branch / pull request workflow on `remote-engineer`.
 
 ## Credits
 

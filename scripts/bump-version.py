@@ -126,7 +126,7 @@ def update_package_lock(new_version: str):
 
     # Bailing out here is deliberate: a lockfile whose version drifts from
     # package.json ships a silently inconsistent release, so fail loudly rather
-    # than let release.sh continue.
+    # than let a release build continue.
     if not (n1 and n2):
         print(
             f"ERROR: package-lock.json not fully updated "

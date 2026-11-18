@@ -68,7 +68,6 @@ e di VE per giro.
   Il pannello mostra per ogni PC cosa sta facendo, e c'è **Pin** come rimedio.
 - *Post Race Results* e *Fuel Calculator* aperti dall'hub usano i dati del PC
   dell'ingegnere, non quelli dei piloti.
-- La voce del race engineer non passa dall'hub.
 
 ## Provare senza il gioco
 

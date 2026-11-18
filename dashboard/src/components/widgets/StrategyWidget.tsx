@@ -100,7 +100,7 @@ function rateBasis(e: EnergyPlan): string {
   return `this stint, ${laps}`
 }
 
-function EnergyColumn({ title, e, kind, cfg, lapsCompleted }: { title: string; e: EnergyPlan; kind: 've' | 'fuel'; cfg: StrategyConfig; lapsCompleted: number }) {
+function EnergyColumn({ title, e, kind, cfg, lapsCompleted, refLap }: { title: string; e: EnergyPlan; kind: 've' | 'fuel'; cfg: StrategyConfig; lapsCompleted: number; refLap: number | null }) {
   const u = e.unit
   const digits = u === '%' ? 1 : 1
   const r = e.rate
@@ -114,6 +114,9 @@ function EnergyColumn({ title, e, kind, cfg, lapsCompleted }: { title: string; e
       <span style={{ fontFamily: fonts.mono, fontSize: 18, color: colors.text }}>
         {fmtEnergy(e.now, u, digits)}
         <span style={{ fontSize: 13, color: colors.textMuted }}> · {fmtNum(e.laps_left, 1)} laps</span>
+        {refLap ? (
+          <span style={{ fontSize: 13, color: colors.textMuted }} title="At the reference lap time"> ≈ {fmtDuration(e.laps_left * refLap)}</span>
+        ) : null}
         {r.last_lap !== null && r.last_lap > 0 ? (
           <span style={{ fontSize: 13, color: colors.textMuted }} title="Laps left if every lap used what the last one did — closer to how the game's HUD counts">
             {' '}({fmtNum(Math.max(0, (e.now - e.reserve) / r.last_lap), 1)} at last lap's use)
@@ -244,8 +247,8 @@ function Energy({ s }: { s: StrategyUpdate }) {
   if (!s.fuel && !s.ve) return null
   return (
     <div style={{ display: 'grid', gridTemplateColumns: s.fuel && s.ve ? '1fr 1fr' : '1fr', gap: 12 }}>
-      {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} kind="fuel" cfg={s.config} lapsCompleted={s.laps_completed} /> : null}
-      {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} kind="ve" cfg={s.config} lapsCompleted={s.laps_completed} /> : null}
+      {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} kind="fuel" cfg={s.config} lapsCompleted={s.laps_completed} refLap={s.pace.ref_lap_s} /> : null}
+      {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} kind="ve" cfg={s.config} lapsCompleted={s.laps_completed} refLap={s.pace.ref_lap_s} /> : null}
     </div>
   )
 }

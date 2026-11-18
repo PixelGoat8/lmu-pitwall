@@ -29,9 +29,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 quick-xml = { version = "0.37", features = ["encoding"] }
 sha2 = "0.10"
 hex = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
 base64 = "0.22"
-bitflags = "2"
 rand = "0.8"
 rmpv = { version = "1", features = ["with-serde"] }
 
@@ -56,3 +54,6 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[build-dependencies]
+embed-resource = "2.5"

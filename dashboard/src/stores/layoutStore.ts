@@ -29,7 +29,7 @@ const RACE_WIDGETS: WidgetConfig[] = [
   { id: 'rpm-1',        widgetType: 'RPMBar' },
   { id: 'lap-1',        widgetType: 'LapTiming' },
   { id: 'tire-1',       widgetType: 'TireMonitor' },
-  { id: 'fuel-1',       widgetType: 'FuelManager' },
+  { id: 'strategy-1',   widgetType: 'StrategyWidget' },
   { id: 'input-1',      widgetType: 'InputBars' },
   { id: 'standings-1',  widgetType: 'Standings' },
   { id: 'session-1',    widgetType: 'SessionInfo' },
@@ -44,7 +44,7 @@ const RACE_LG = [
   { i: 'rpm-1',        x: 5,  y: 0, w: 5, h: 2, minW: 3, minH: 2 },
   { i: 'lap-1',        x: 5,  y: 2, w: 5, h: 2, minW: 3, minH: 2 },
   { i: 'tire-1',       x: 10, y: 0, w: 2, h: 4, minW: 2, minH: 3 },
-  { i: 'fuel-1',       x: 0,  y: 4, w: 3, h: 4, minW: 2, minH: 3 },
+  { i: 'strategy-1',   x: 0,  y: 4, w: 3, h: 4, minW: 2, minH: 3 },
   { i: 'input-1',      x: 3,  y: 4, w: 3, h: 4, minW: 2, minH: 3 },
   { i: 'standings-1',  x: 6,  y: 4, w: 6, h: 4, minW: 4, minH: 3 },
   { i: 'session-1',    x: 0,  y: 8, w: 4, h: 3, minW: 3, minH: 2 },
@@ -87,12 +87,11 @@ const COMPACT_LG = [
   { i: 'lap-1',   x: 5,  y: 2, w: 7, h: 4, minW: 3, minH: 2 },
 ]
 
-// Endurance: Fuel + Tires + Standings + Weather + Session info focus
+// Endurance: Strategy + Tires + Standings + Weather + Session info focus
 const ENDURANCE_WIDGETS: WidgetConfig[] = [
   { id: 'gear-1',       widgetType: 'GearIndicator' },
   { id: 'speed-1',      widgetType: 'SpeedGauge' },
   { id: 'rpm-1',        widgetType: 'RPMBar' },
-  { id: 'fuel-1',       widgetType: 'FuelManager' },
   { id: 'tire-1',       widgetType: 'TireMonitor' },
   { id: 'standings-1',  widgetType: 'Standings' },
   { id: 'weather-1',    widgetType: 'WeatherWidget' },
@@ -107,8 +106,7 @@ const ENDURANCE_LG = [
   { i: 'speed-1',      x: 2,  y: 0, w: 3, h: 4, minW: 2, minH: 3 },
   { i: 'rpm-1',        x: 5,  y: 0, w: 7, h: 2, minW: 3, minH: 2 },
   { i: 'lap-1',        x: 5,  y: 2, w: 7, h: 2, minW: 3, minH: 2 },
-  { i: 'fuel-1',       x: 0,  y: 4, w: 3, h: 5, minW: 2, minH: 3 },
-  { i: 'tire-1',       x: 3,  y: 4, w: 3, h: 5, minW: 2, minH: 3 },
+  { i: 'tire-1',       x: 0,  y: 4, w: 6, h: 5, minW: 2, minH: 3 },
   { i: 'standings-1',  x: 6,  y: 4, w: 6, h: 5, minW: 4, minH: 3 },
   { i: 'session-1',    x: 0,  y: 9, w: 5, h: 3, minW: 3, minH: 2 },
   { i: 'weather-1',    x: 5,  y: 9, w: 3, h: 3, minW: 2, minH: 2 },
@@ -121,7 +119,6 @@ const ENDURANCE_LG = [
 const ENGINEER_WIDGETS: WidgetConfig[] = [
   { id: 'gaps-1',       widgetType: 'GapWidget' },
   { id: 'traffic-1',    widgetType: 'TrafficWidget' },
-  { id: 'fuel-1',       widgetType: 'FuelManager' },
   { id: 'tire-1',       widgetType: 'TireMonitor' },
   { id: 'strategy-1',   widgetType: 'StrategyWidget' },
   { id: 'rivals-1',     widgetType: 'RivalsWidget' },
@@ -134,8 +131,7 @@ const ENGINEER_WIDGETS: WidgetConfig[] = [
 const ENGINEER_LG = [
   { i: 'gaps-1',       x: 0, y: 0,  w: 4, h: 3, minW: 3, minH: 2 },
   { i: 'traffic-1',    x: 4, y: 0,  w: 4, h: 3, minW: 3, minH: 3 },
-  { i: 'fuel-1',       x: 8, y: 0,  w: 2, h: 3, minW: 2, minH: 3 },
-  { i: 'tire-1',       x: 10, y: 0, w: 2, h: 3, minW: 2, minH: 3 },
+  { i: 'tire-1',       x: 8, y: 0,  w: 4, h: 3, minW: 2, minH: 3 },
   { i: 'strategy-1',   x: 0, y: 3,  w: 7, h: 9, minW: 4, minH: 4 },
   { i: 'rivals-1',     x: 7, y: 3,  w: 5, h: 5, minW: 4, minH: 3 },
   { i: 'events-1',     x: 7, y: 8,  w: 5, h: 4, minW: 3, minH: 3 },
@@ -322,6 +318,56 @@ export const useLayoutStore = create<LayoutStore>()(
         }
       },
     }),
-    { name: 'lmu-layout-store' }
+    {
+      name: 'lmu-layout-store',
+      version: 1,
+      migrate: (persisted, version) => (version < 1 ? withoutFuelManager(persisted) : persisted) as LayoutStore,
+    }
   )
 )
+
+// ---------------------------------------------------------------------------
+// Saved layouts from before the Fuel Manager widget was folded into Strategy
+// ---------------------------------------------------------------------------
+
+type Saved = {
+  widgets?: WidgetConfig[]
+  layouts?: ResponsiveLayouts
+  presetWidgets?: Record<string, WidgetConfig[]>
+  presetLayouts?: Record<string, ResponsiveLayouts>
+}
+
+/** One layout: the Fuel Manager becomes Strategy in the same place, or just
+ *  goes if Strategy is there already. */
+function migrateOne(widgets: WidgetConfig[], layouts: ResponsiveLayouts | undefined): [WidgetConfig[], ResponsiveLayouts | undefined] {
+  const fuel = widgets.filter((w) => w.widgetType === 'FuelManager').map((w) => w.id)
+  if (fuel.length === 0) return [widgets, layouts]
+  const hasStrategy = widgets.some((w) => w.widgetType === 'StrategyWidget')
+  const keep = hasStrategy ? [] : fuel.slice(0, 1)
+  const drop = new Set(fuel.filter((id) => !keep.includes(id)))
+  const nextWidgets = widgets
+    .filter((w) => !drop.has(w.id))
+    .map((w) => (keep.includes(w.id) ? { ...w, widgetType: 'StrategyWidget' } : w))
+  const nextLayouts = layouts
+    ? (Object.fromEntries(
+        Object.entries(layouts).map(([bp, items]) => [bp, (items ?? []).filter((item) => !drop.has(item.i))]),
+      ) as unknown as ResponsiveLayouts)
+    : layouts
+  return [nextWidgets, nextLayouts]
+}
+
+function withoutFuelManager(persisted: unknown): unknown {
+  const s = (persisted ?? {}) as Saved
+  const out: Saved = { ...s }
+  if (s.widgets) [out.widgets, out.layouts] = migrateOne(s.widgets, s.layouts)
+  if (s.presetWidgets) {
+    out.presetWidgets = { ...s.presetWidgets }
+    out.presetLayouts = { ...(s.presetLayouts ?? {}) }
+    for (const [name, ws] of Object.entries(s.presetWidgets)) {
+      const [w, l] = migrateOne(ws, s.presetLayouts?.[name])
+      out.presetWidgets[name] = w
+      if (l) out.presetLayouts[name] = l
+    }
+  }
+  return out
+}

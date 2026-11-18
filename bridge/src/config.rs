@@ -15,10 +15,6 @@ pub struct Config {
     #[arg(long, default_value_t = 20)]
     pub scoring_fps: u32,
 
-    /// Enable LMU REST API polling (Phase 2)
-    #[arg(long, default_value_t = false)]
-    pub enable_rest_api: bool,
-
     /// Log level (trace, debug, info, warn, error)
     #[arg(long, default_value = "info")]
     pub log_level: String,

@@ -43,7 +43,10 @@ fn file_name(track: &str) -> String {
 }
 
 pub fn is_track_command(cmd: &ClientCommand) -> bool {
-    matches!(cmd, ClientCommand::TrackOutlineGet { .. } | ClientCommand::TrackOutlineSave { .. })
+    matches!(
+        cmd,
+        ClientCommand::TrackOutlineGet { .. } | ClientCommand::TrackOutlineSave { .. } | ClientCommand::TrackOutlineDelete { .. }
+    )
 }
 
 pub fn handle_command(cmd: ClientCommand) -> ServerMessage {
@@ -62,6 +65,12 @@ pub fn handle_command(cmd: ClientCommand) -> ServerMessage {
             // Either way, what is stored now.
             let json = get_in(&dir, &track);
             ServerMessage::TrackOutline { track, json }
+        }
+        ClientCommand::TrackOutlineDelete { track } => {
+            if delete_in(&dir, &track) {
+                info!("Track map: outline of {} deleted", track);
+            }
+            ServerMessage::TrackOutline { track, json: None }
         }
         _ => ServerMessage::TrackOutline { track: String::new(), json: None },
     }
@@ -83,6 +92,11 @@ fn get_in(dir: &Path, track: &str) -> Option<String> {
             None
         }
     }
+}
+
+/// Remove the stored record of `track`; whether there was one.
+fn delete_in(dir: &Path, track: &str) -> bool {
+    !track.trim().is_empty() && std::fs::remove_file(dir.join(file_name(track))).is_ok()
 }
 
 /// What the dashboard's record says about itself, after a shape check.
@@ -222,6 +236,17 @@ mod tests {
         let pts = v["points"].as_array_mut().unwrap();
         pts.drain(100..120);
         assert!(save_in(&dir, t, &v.to_string()).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_outline_can_be_deleted() {
+        let dir = temp_dir("delete");
+        let t = "Monza";
+        assert!(save_in(&dir, t, &outline(t, 3, 300, true)).unwrap());
+        assert!(delete_in(&dir, t));
+        assert_eq!(get_in(&dir, t), None);
+        assert!(!delete_in(&dir, t));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

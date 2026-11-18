@@ -7,9 +7,6 @@ import Settings from './components/Settings'
 import PostRaceResults from './components/PostRaceResults'
 import FuelCalculator from './components/FuelCalculator'
 import HistoryPanel from './components/HistoryPanel'
-import RaceEngineerPage from './features/race-engineer/RaceEngineerPage'
-import { engineerService } from './features/race-engineer/audio/AudioEngineerService'
-import { useEngineerSettingsStore } from './features/race-engineer/state/engineerSettings'
 import { useSettingsStore } from './stores/settingsStore'
 
 export default function App() {
@@ -18,19 +15,7 @@ export default function App() {
   const [resultsOpen, setResultsOpen] = useState(false)
   const [fuelOpen, setFuelOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
-  const [engineerOpen, setEngineerOpen] = useState(false)
   const updateSettings = useSettingsStore((s) => s.update)
-
-  // Initialize global audio service and sync persisted settings
-  useEffect(() => {
-    engineerService.init()
-    const { enabled, volume, radioEffect, outputDeviceId } = useEngineerSettingsStore.getState()
-    engineerService.setEnabled(enabled)
-    engineerService.setVolume(volume)
-    engineerService.setRadioEffect(radioEffect)
-    engineerService.setOutputDevice(outputDeviceId)
-    return () => engineerService.destroy()
-  }, [])
 
   // Restore fullscreen on mount
   useEffect(() => {
@@ -75,14 +60,12 @@ export default function App() {
     }}>
       <Toolbar
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenResults={() => { setFuelOpen(false); setEngineerOpen(false); setHistoryOpen(false); setResultsOpen(v => !v) }}
-        onOpenFuel={() => { setResultsOpen(false); setEngineerOpen(false); setHistoryOpen(false); setFuelOpen(v => !v) }}
-        onOpenEngineer={() => { setResultsOpen(false); setFuelOpen(false); setHistoryOpen(false); setEngineerOpen(v => !v) }}
-        onOpenHistory={() => { setResultsOpen(false); setFuelOpen(false); setEngineerOpen(false); setHistoryOpen(v => !v) }}
+        onOpenResults={() => { setFuelOpen(false); setHistoryOpen(false); setResultsOpen(v => !v) }}
+        onOpenFuel={() => { setResultsOpen(false); setHistoryOpen(false); setFuelOpen(v => !v) }}
+        onOpenHistory={() => { setResultsOpen(false); setFuelOpen(false); setHistoryOpen(v => !v) }}
         historyOpen={historyOpen}
         resultsOpen={resultsOpen}
         fuelOpen={fuelOpen}
-        engineerOpen={engineerOpen}
       />
       {historyOpen
         ? <HistoryPanel onClose={() => setHistoryOpen(false)} />
@@ -90,9 +73,7 @@ export default function App() {
         ? <PostRaceResults onClose={() => setResultsOpen(false)} />
         : fuelOpen
           ? <FuelCalculator onClose={() => setFuelOpen(false)} />
-          : engineerOpen
-            ? <RaceEngineerPage onClose={() => setEngineerOpen(false)} />
-            : <WidgetGrid />
+          : <WidgetGrid />
       }
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>

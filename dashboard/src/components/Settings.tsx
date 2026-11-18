@@ -3,6 +3,8 @@ import { useSettingsStore, SETTINGS_DEFAULTS } from '../stores/settingsStore'
 import type { FpsLimit, InputChartFps, SpeedUnit, TempUnit, PressureUnit, FuelUnit, ClockFormat, DamageDetail, WeatherDetail, TrackMapDetail, BattleMode, BattleValueMode, StandingsClassFilter, StandingsGapMode } from '../stores/settingsStore'
 import { colors, fonts } from '../styles/theme'
 import { bridgeHttpBase } from '../utils/bridge'
+import { sendBridgeCommand } from '../hooks/useWebSocket'
+import { useTelemetryStore } from '../stores/telemetryStore'
 
 interface Props {
   open: boolean
@@ -98,8 +100,12 @@ export default function Settings({ open, onClose }: Props) {
 
   if (!open) return null
 
-  function handleDeleteTrack(storageKey: string) {
+  // The outline lives in this browser and on the bridge: delete both, and
+  // tell an open map, or it would store its copy again.
+  function handleDeleteTrack(storageKey: string, trackName: string) {
     localStorage.removeItem(storageKey)
+    sendBridgeCommand({ command: 'track_outline_delete', track: trackName })
+    useTelemetryStore.setState({ trackOutlineDeleted: { track: trackName, at: Date.now() } })
     setSavedTracks(getSavedTracks())
   }
 
@@ -204,23 +210,6 @@ export default function Settings({ open, onClose }: Props) {
                 options={[{ value: 'liters', label: 'L' }, { value: 'gallons', label: 'gal' }] as { value: FuelUnit; label: string }[]}
                 onChange={(v) => s.update({ fuelUnit: v as FuelUnit })}
               />
-            </Row>
-            <Row label="Lap Reserve">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="number"
-                  value={s.lapReserve}
-                  min={0}
-                  max={5}
-                  step={0.25}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value)
-                    if (!isNaN(v) && v >= 0 && v <= 5) s.update({ lapReserve: v })
-                  }}
-                  style={{ ...inputStyle, width: 70 }}
-                />
-                <span style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted }}>laps</span>
-              </div>
             </Row>
           </Section>
 
@@ -561,8 +550,8 @@ export default function Settings({ open, onClose }: Props) {
           <Section title="Track Maps">
             {savedTracks.length === 0 ? (
               <p style={{ fontFamily: fonts.body, fontSize: 16, color: colors.textMuted, margin: 0, lineHeight: 1.5 }}>
-                No track outlines recorded yet.<br />
-                Drive a lap on any track to create one automatically.
+                No track outlines in this browser yet.<br />
+                One is recorded from the first clean lap of any car on track.
               </p>
             ) : (
               <div style={{
@@ -576,14 +565,14 @@ export default function Settings({ open, onClose }: Props) {
                     key={t.storageKey}
                     track={t}
                     last={i === savedTracks.length - 1}
-                    onDelete={() => handleDeleteTrack(t.storageKey)}
+                    onDelete={() => handleDeleteTrack(t.storageKey, t.trackName)}
                   />
                 ))}
               </div>
             )}
             <p style={{ fontFamily: fonts.body, fontSize: 15, color: colors.textMuted, margin: '4px 0 0', lineHeight: 1.5 }}>
-              Track outlines are recorded automatically while driving.<br />
-              Delete one to re-record it on the next session.
+              Outlines are recorded from any car on track and shared through the bridge or hub.<br />
+              Delete one (here and on the bridge) to record it again on the next clean lap.
             </p>
           </Section>
 

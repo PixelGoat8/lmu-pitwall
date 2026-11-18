@@ -4,7 +4,6 @@ import SpeedGauge from './widgets/SpeedGauge'
 import RPMBar from './widgets/RPMBar'
 import LapTiming from './widgets/LapTiming'
 import TireMonitor from './widgets/TireMonitor'
-import FuelManager from './widgets/FuelManager'
 import InputBars from './widgets/InputBars'
 import Standings from './widgets/Standings'
 import BattleWidget from './widgets/BattleWidget'
@@ -68,13 +67,6 @@ export const WIDGET_REGISTRY: Record<string, WidgetMeta> = {
     name: 'Tires',
     component: TireMonitor,
     defaultSize: { w: 2, h: 4 },
-    minSize: { w: 2, h: 3 },
-  },
-  FuelManager: {
-    id: 'FuelManager',
-    name: 'Fuel',
-    component: FuelManager,
-    defaultSize: { w: 3, h: 4 },
     minSize: { w: 2, h: 3 },
   },
   InputBars: {

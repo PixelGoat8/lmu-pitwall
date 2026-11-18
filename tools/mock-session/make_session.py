@@ -253,7 +253,6 @@ def main():
         # each of the four braking zones.
         coast_s = lico_at(laps_done[player_id] + 1)[0]
         coasting = (not in_pit) and not braking and coast_s > 0 and braking_at(frac + coast_s / 4 / cars[player_id]["lap"])
-        avg = sum(recent_fuel[-10:]) / len(recent_fuel[-10:]) if recent_fuel else 0.0
         tires = []
         for w in range(4):
             base = 92 + 6 * math.sin(t / 7 + w) + (10 if w < 2 else 0)
@@ -279,12 +278,7 @@ def main():
             position=dict(x=600 * math.cos(ang), y=0.0, z=400 * math.sin(ang)),
             velocity=dict(x=0.0, y=0.0, z=-speed), local_accel=dict(x=0.0, y=0.0, z=(-18.0 if braking else 3.0)),
             delta_best=0.2 * math.sin(t / 5), current_et=t, lap_start_et=lap_start[player_id],
-            fuel_avg_consumption=avg, fuel_avg_sample_count=min(10, len(recent_fuel)),
-            fuel_laps_remaining=(shown_fuel / avg if avg > 0 else 999.0),
-            fuel_stint_number=stint, fuel_stint_laps=stint_laps,
-            fuel_stint_consumption=stint_start_fuel - fuel, fuel_recommended=0.0,
-            fuel_pit_detected=in_pit, fuel_avg_lap_time=(last_lap[player_id] if last_lap[player_id] > 0 else 0.0),
-            ve_history=None, ve_available=True, heading_deg=(math.degrees(ang) + 90) % 360,
+            heading_deg=(math.degrees(ang) + 90) % 360,
         ))
 
         in_fcy = fcy is not None and fcy[0] <= t < fcy[1]
