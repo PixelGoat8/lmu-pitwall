@@ -154,6 +154,8 @@ interface TelemetryStore {
 
   // Actions
   setConnection: (status: ConnectionStatus) => void
+  /** Forget the car on screen: the page is moving to another team. */
+  resetForTeam: () => void
   applyMessage: (msg: ServerMessage) => void
 }
 
@@ -297,26 +299,39 @@ function gearLabel(gear: number): string {
 // Store
 // ---------------------------------------------------------------------------
 
+// Everything that describes a car and its session: cleared when the page
+// switches to another team of a hub, so nothing of one car shows on the other.
+type CarData = Omit<TelemetryStore, 'connection' | 'versionInfo' | 'setConnection' | 'resetForTeam' | 'applyMessage'>
+
+function freshData(): CarData {
+  return {
+    telemetry: defaultTelemetry,
+    scoring: defaultScoring,
+    session: defaultSession,
+    electronics: defaultElectronics,
+    vehicleStatus: defaultVehicleStatus,
+    allDrivers: defaultAllDrivers,
+    hub: { status: null, stints: [], error: null },
+    strategy: null,
+    raceTiming: null,
+    aiFeed: null,
+    history: { sessions: null, detail: null, carLaps: null, error: null },
+    trackOutline: null,
+    trackOutlineDeleted: null,
+    lapHistory: [],
+    weatherHistory: [],
+    _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
+    _weatherSessionKey: '',
+  }
+}
+
 export const useTelemetryStore = create<TelemetryStore>((set) => ({
-  telemetry: defaultTelemetry,
-  scoring: defaultScoring,
-  session: defaultSession,
-  electronics: defaultElectronics,
-  vehicleStatus: defaultVehicleStatus,
-  allDrivers: defaultAllDrivers,
+  ...freshData(),
   connection: defaultConnection,
   versionInfo: null,
-  hub: { status: null, stints: [], error: null },
-  strategy: null,
-  raceTiming: null,
-  aiFeed: null,
-  history: { sessions: null, detail: null, carLaps: null, error: null },
-  trackOutline: null,
-  trackOutlineDeleted: null,
-  lapHistory: [],
-  weatherHistory: [],
-  _lapTracking: { prevTotalLaps: -1, prevPlayerId: -1 },
-  _weatherSessionKey: '',
+
+  resetForTeam: () =>
+    set((state) => ({ ...freshData(), connection: { ...defaultConnection, status: state.connection.status }, versionInfo: state.versionInfo })),
 
   setConnection: (status) =>
     set((state) => ({

@@ -330,6 +330,25 @@ export interface HubStints {
   stints: HubStintInfo[]
 }
 
+/** One team of a hub: a car of ours, with its drivers' PCs. */
+export interface TeamInfo {
+  id: string
+  name: string
+  color: string
+  sources: number            // drivers' PCs in the team
+  active: string | null      // the PC being followed, by its label
+  driving: boolean           // that PC is driving the car
+  car_name: string           // empty until a PC in a session is followed
+  driver: string
+}
+
+/** The hub's teams, every second. `current` is the one this page watches. */
+export interface TeamsMsg {
+  type: 'Teams'
+  teams: TeamInfo[]
+  current: string
+}
+
 export interface HubError {
   type: 'HubError'
   message: string
@@ -360,6 +379,7 @@ export type ServerMessage =
   | HubStatus
   | HubStints
   | HubError
+  | TeamsMsg
   | StrategyUpdate
   | PitInfoMsg
   | RaceTiming

@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { decode } from '@msgpack/msgpack'
 import { useTelemetryStore } from '../stores/telemetryStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useTeamStore } from '../stores/teamStore'
 import { bridgeWsUrl, checkBridgeAuth } from '../utils/bridge'
 import type { ServerMessage } from '../types/telemetry'
 
@@ -58,12 +59,15 @@ export function useWebSocket() {
   const wsHost = useSettingsStore((s) => s.wsHost)
   const wsPort = useSettingsStore((s) => s.wsPort)
   const bridgeToken = useSettingsStore((s) => s.bridgeToken)
+  // ...and a change of team on a hub, which is a connection of its own.
+  const team = useTeamStore((s) => s.team)
 
   const connect = useCallback(() => {
     if (!mountedRef.current) return
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
 
     const ws = new WebSocket(bridgeWsUrl())
+    const forTeam = useTeamStore.getState().team
     wsRef.current = ws
     connectStartedAtRef.current = Date.now()
     ws.binaryType = 'arraybuffer'
@@ -108,6 +112,9 @@ export function useWebSocket() {
 
     ws.onmessage = (event) => {
       if (!mountedRef.current) return
+      // Switched team: this socket is about to be closed, and what it still
+      // carries belongs to the other car.
+      if (useTeamStore.getState().team !== forTeam) return
       lastMessageAtRef.current = Date.now()
       try {
         let msg: ServerMessage
@@ -118,7 +125,8 @@ export function useWebSocket() {
           // Text frame → JSON fallback (debug mode)
           msg = JSON.parse(event.data as string) as ServerMessage
         }
-        applyMessage(msg)
+        if (msg.type === 'Teams') useTeamStore.getState().setTeams(msg.teams, msg.current)
+        else applyMessage(msg)
       } catch {
         // Malformed message — ignore
       }
@@ -130,7 +138,7 @@ export function useWebSocket() {
 
     ws.onclose = retry
     retryRef.current = retry
-  }, [setConnection, applyMessage, wsHost, wsPort, bridgeToken])
+  }, [setConnection, applyMessage, wsHost, wsPort, bridgeToken, team])
 
   useEffect(() => {
     mountedRef.current = true

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useLayoutStore, LAYOUT_PRESETS } from '../stores/layoutStore'
 import { useTelemetryStore } from '../stores/telemetryStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { useTeamStore } from '../stores/teamStore'
 import { WIDGET_REGISTRY } from './widgetRegistry'
 import { colors, fonts } from '../styles/theme'
 import { bridgeApiUrl } from '../utils/bridge'
@@ -230,6 +231,53 @@ function FollowPicker() {
   )
 }
 
+/**
+ * On a hub with more than one team: one button per team, in its colour.
+ * Switching keeps the page and the layout; only the car on screen changes.
+ */
+function TeamSwitcher() {
+  const teams = useTeamStore((s) => s.teams)
+  const current = useTeamStore((s) => s.current)
+  const asked = useTeamStore((s) => s.team)
+  const setTeam = useTeamStore((s) => s.setTeam)
+  if (teams.length < 2) return null
+  const on = current ?? asked
+  return (
+    <div role="group" aria-label="Team" style={{ display: 'flex', gap: 0, borderRadius: 3, overflow: 'hidden', border: `1px solid ${colors.border}` }}>
+      {teams.map((t, i) => {
+        const active = t.id === on
+        const who = t.driver || t.active || (t.sources ? 'nobody connected' : 'no drivers')
+        return (
+          <button
+            key={t.id}
+            onClick={() => setTeam(t.id)}
+            aria-pressed={active}
+            title={`${t.name}: ${t.car_name || 'no car yet'} — ${who}${t.active && !t.driving ? ' (not driving)' : ''}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '4px 10px',
+              fontFamily: fonts.body,
+              fontSize: 16,
+              whiteSpace: 'nowrap',
+              cursor: active ? 'default' : 'pointer',
+              border: 'none',
+              borderLeft: i ? `1px solid ${colors.border}` : 'none',
+              background: active ? `${t.color}33` : colors.bgWidget,
+              color: active ? colors.text : colors.textMuted,
+              boxShadow: active ? `inset 0 -2px 0 ${t.color}` : 'none',
+            }}
+          >
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: t.color, opacity: t.driving ? 1 : 0.45, flexShrink: 0 }} />
+            {t.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /** On a hub: who is on screen right now. Nothing on an ordinary bridge. */
 function HubBadge() {
   const status = useTelemetryStore((s) => s.hub.status)
@@ -311,6 +359,8 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
 }) {
   const { activePreset, locked, setPreset, resetToDefault, toggleLock, addWidget } = useLayoutStore()
   const fullscreen = useSettingsStore((s) => s.fullscreen)
+  // With several teams, the toolbar's edge wears the colour of the one on screen.
+  const teamColor = useTeamStore((s) => (s.teams.length > 1 ? s.teams.find((t) => t.id === s.current)?.color : undefined))
 
   const toggleFullscreen = useCallback(() => toggleFs(), [])
   const [fsOn, setFsOn] = useState(isFullscreen())
@@ -340,7 +390,7 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
       paddingLeft: 'max(14px, env(safe-area-inset-left))',
       paddingRight: 'max(14px, env(safe-area-inset-right))',
       background: colors.bgCard,
-      borderBottom: `1px solid ${colors.border}`,
+      borderBottom: teamColor ? `2px solid ${teamColor}` : `1px solid ${colors.border}`,
       flexShrink: 0,
       minHeight: 52,
     }}>
@@ -358,6 +408,7 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
       </span>
 
       <ConnectionBadge />
+      <TeamSwitcher />
       <HubBadge />
       <FollowPicker />
 

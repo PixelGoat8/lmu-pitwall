@@ -1,4 +1,5 @@
 import { useSettingsStore } from '../stores/settingsStore'
+import { teamQuery } from '../stores/teamStore'
 
 function resolveTarget(): { host: string; port: string } {
   const { wsHost, wsPort } = useSettingsStore.getState()
@@ -16,11 +17,14 @@ function tokenQuery(prefix: '?' | '&'): string {
 /**
  * WebSocket URL of the bridge. Carries the access token as a query parameter,
  * because a browser cannot set headers on a WebSocket. A browser on the
- * racing PC itself needs no token; the bridge ignores it there.
+ * racing PC itself needs no token; the bridge ignores it there. On a hub it
+ * also names the team this page watches (see stores/teamStore).
  */
 export function bridgeWsUrl(): string {
   const { host, port } = resolveTarget()
-  return `ws://${host}:${port}/${tokenQuery('?')}`
+  const token = tokenQuery('?')
+  const team = teamQuery()
+  return `ws://${host}:${port}/${token}${team ? `${token ? '&' : '?'}${team}` : ''}`
 }
 
 export function bridgeHttpBase(): string {
