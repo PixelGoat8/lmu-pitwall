@@ -6,6 +6,7 @@ import { getClassColor } from '../../utils/classColors'
 import { DAMAGE_ZONES, dentPct } from '../../utils/damage'
 import { hexAlpha, fmtSec, fmtLap, fmtTimeDiff, sectorColor, bestS2, SECTOR_SB } from '../../utils/lapFormat'
 import { raceGap } from '../../utils/gaps'
+import { useSisterCars } from '../../utils/sisterCars'
 import type { VehicleScoring } from '../../types/telemetry'
 
 function ClassBadge({ position, vehicleClass }: { position: string; vehicleClass: string }) {
@@ -98,6 +99,8 @@ export default function Standings() {
 
   const vehicles = useTelemetryStore((s) => s.scoring.vehicles)
   const playerId = useTelemetryStore((s) => s.scoring.player_vehicle_id)
+  // Our other team's car, in its team colour.
+  const sisters = useSisterCars()
   const sessionType = useTelemetryStore((s) => s.scoring.session_type)
   const numVehicles = useTelemetryStore((s) => s.scoring.num_vehicles)
   const allDrivers = useTelemetryStore((s) => s.allDrivers.drivers)
@@ -268,6 +271,7 @@ export default function Standings() {
         <div ref={scrollableRef} style={{ flex: 1, overflowY: 'auto' }}>
           {rows.map((v) => {
             const isPlayer = v.id === playerId
+            const sister = isPlayer ? undefined : sisters.get(v.car_name)
             const vS1 = v.best_sector1
             const vS2 = bestS2(v)
             const vS3 = v.best_sector3
@@ -279,8 +283,8 @@ export default function Standings() {
               <div key={v.id} ref={isPlayer ? playerRowRef : undefined} style={{
                 display: 'flex', alignItems: 'center', gap: 4,
                 padding: '3px 4px', borderRadius: 3,
-                background: isPlayer ? `${colors.primary}18` : 'transparent',
-                borderLeft: isPlayer ? `2px solid ${colors.primary}` : '2px solid transparent',
+                background: isPlayer ? `${colors.primary}18` : sister ? `${sister.color}22` : 'transparent',
+                borderLeft: isPlayer ? `2px solid ${colors.primary}` : sister ? `2px solid ${sister.color}` : '2px solid transparent',
                 marginBottom: 1,
               }}>
                 {/* Class position badge */}
@@ -304,8 +308,9 @@ export default function Standings() {
                     fontFamily: fonts.body, fontSize: 15,
                     color: isPlayer ? colors.primary : colors.text,
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
-                  }}>
+                  }} title={sister ? `Our car: ${sister.team}` : undefined}>
                     {isPlayer ? `★ ${v.driver_name || `Car #${v.id}`}` : (v.driver_name || `Car #${v.id}`)}
+                    {sister ? <span style={{ color: sister.color, fontSize: 12 }}> · {sister.team}</span> : null}
                   </span>
                   {v.in_pits && (
                     <span style={{

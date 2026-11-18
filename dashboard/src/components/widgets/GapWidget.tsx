@@ -5,6 +5,8 @@ import { getClassColor } from '../../utils/classColors'
 import { classNeighbours, fmtGap, gapBetween, gapTrend } from '../../utils/gaps'
 import type { Gap, GapSample } from '../../utils/gaps'
 import type { VehicleScoring } from '../../types/telemetry'
+import { useSisterCars } from '../../utils/sisterCars'
+import type { SisterCar } from '../../utils/sisterCars'
 
 // Gap history is kept per rival for a little over two laps of a long circuit.
 const HISTORY_S = 600
@@ -34,6 +36,7 @@ export default function GapWidget() {
   const vehicles = useTelemetryStore((s) => s.scoring.vehicles)
   const playerId = useTelemetryStore((s) => s.scoring.player_vehicle_id)
   const sessionType = useTelemetryStore((s) => s.scoring.session_type)
+  const sisters = useSisterCars()
 
   const isRace = sessionType?.toLowerCase().includes('race') ?? false
   const info = useMemo(() => classNeighbours(vehicles, playerId), [vehicles, playerId])
@@ -92,9 +95,24 @@ export default function GapWidget() {
   ]
   const classColor = getClassColor(info.player.vehicle_class)
 
+  // Our other team's cars in this class, wherever they are: the engineer
+  // wants that gap even when they are not the next car.
+  const sisterGaps = vehicles
+    .filter((v) => v.id !== info.player.id && v.vehicle_class === info.player.vehicle_class && sisters.has(v.car_name))
+    .filter((v) => v.id !== info.ahead?.id && v.id !== info.behind?.id)
+    .map((v) => ({ car: v, sister: sisters.get(v.car_name) as SisterCar, gap: gapBetween(vehicles, info.player, v, isRace) }))
+
   return (
     <div style={frame}>
-      {rows.map((r) => <GapRow key={r.side} row={r} isRace={isRace} />)}
+      {rows.map((r) => <GapRow key={r.side} row={r} isRace={isRace} sister={r.car ? sisters.get(r.car.car_name) : undefined} />)}
+      {sisterGaps.map(({ car, sister, gap }) => (
+        <div key={car.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: fonts.body, fontSize: 14, color: colors.text, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: sister.color, flexShrink: 0 }} />
+          <span style={{ color: sister.color }}>{sister.team}</span>
+          <span style={{ fontFamily: fonts.mono }}>{car.position < info.player.position ? '▲' : '▼'} {fmtGap(gap)}</span>
+          <span style={{ color: colors.textMuted, overflow: 'hidden', textOverflow: 'ellipsis' }}>{car.driver_name}</span>
+        </div>
+      ))}
       <div style={{ fontFamily: fonts.mono, fontSize: 12, color: classColor, whiteSpace: 'nowrap', textAlign: 'right', lineHeight: 1 }}>
         {info.player.vehicle_class} P{info.classPosition}/{info.classSize}{isRace ? '' : ' · gaps on best lap'}
       </div>
@@ -114,7 +132,7 @@ const frame: React.CSSProperties = {
   overflow: 'hidden',
 }
 
-function GapRow({ row, isRace }: { row: RowData; isRace: boolean }) {
+function GapRow({ row, isRace, sister }: { row: RowData; isRace: boolean; sister?: SisterCar }) {
   const { side, car, gap, trend } = row
   const arrow = side === 'ahead' ? '▲' : '▼'
 
@@ -149,6 +167,7 @@ function GapRow({ row, isRace }: { row: RowData; isRace: boolean }) {
           <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, gap: 1 }}>
             <span style={{ fontFamily: fonts.body, fontSize: 15, color: colors.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.1 }}>
               P{row.classPos} {car.driver_name}
+              {sister ? <span style={{ color: sister.color }}> · {sister.team}</span> : null}
               {car.in_pits ? <span style={{ color: colors.accent }}> · PIT</span> : null}
             </span>
             <span style={{ fontFamily: fonts.body, fontSize: 13, color: trendColor, whiteSpace: 'nowrap', minHeight: 14, lineHeight: 1 }}>

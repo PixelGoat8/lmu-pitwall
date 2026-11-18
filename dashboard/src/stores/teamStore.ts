@@ -40,7 +40,10 @@ export const useTeamStore = create<TeamStore>((set, get) => ({
   current: null,
 
   setTeams: (teams, current) => {
-    set({ teams, current })
+    // Sent every second, mostly unchanged: keep the same array then, so
+    // nothing re-renders for nothing.
+    const same = JSON.stringify(teams) === JSON.stringify(get().teams)
+    if (!same || current !== get().current) set({ teams: same ? get().teams : teams, current })
     // Asked for a team the hub does not have (deleted, or a stale link): the
     // hub has put us on its first one. Say so in the address bar.
     const asked = get().team
