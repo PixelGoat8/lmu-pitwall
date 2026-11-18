@@ -22,8 +22,8 @@
 pub mod model;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -129,23 +129,13 @@ impl StrategyConfig {
     }
 }
 
-fn data_dir() -> PathBuf {
-    std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")).unwrap_or_else(|_| PathBuf::from("."))
-        })
-        .join("LMUPitwall")
+fn load_json<T: serde::de::DeserializeOwned + Default>(dir: &Path, name: &str) -> T {
+    std::fs::read(dir.join(name)).ok().and_then(|d| serde_json::from_slice(&d).ok()).unwrap_or_default()
 }
 
-fn load_json<T: serde::de::DeserializeOwned + Default>(name: &str) -> T {
-    std::fs::read(data_dir().join(name)).ok().and_then(|d| serde_json::from_slice(&d).ok()).unwrap_or_default()
-}
-
-fn save_json<T: Serialize>(name: &str, value: &T) {
-    let dir = data_dir();
+fn save_json<T: Serialize>(dir: &Path, name: &str, value: &T) {
     let write = || -> std::io::Result<()> {
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(dir)?;
         let tmp = dir.join(format!("{name}.tmp"));
         std::fs::write(&tmp, serde_json::to_vec_pretty(value).unwrap_or_default())?;
         std::fs::rename(tmp, dir.join(name))
@@ -153,6 +143,14 @@ fn save_json<T: Serialize>(name: &str, value: &T) {
     if let Err(e) = write() {
         warn!("Could not save {}: {}", name, e);
     }
+}
+
+/// The pit lane losses measured so far, one store for the whole process: on
+/// a hub every team's engine adds to it, and a stop measured by one team is
+/// known to the others. Kept in `pit_loss.json` in the main data folder.
+fn shared_pit_loss() -> &'static Mutex<PitLossStore> {
+    static STORE: OnceLock<Mutex<PitLossStore>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(load_json(&crate::paths::root(), "pit_loss.json")))
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +285,7 @@ struct PendingLoss {
 #[derive(Default)]
 pub struct Engine {
     pub cfg: StrategyConfig,
-    pit_loss: PitLossStore,
+    pub(crate) pit_loss: PitLossStore,
     laps: Vec<LapSample>,
 
     session_type: String,
@@ -316,6 +314,8 @@ pub struct Engine {
     stationary_since: Option<f64>,
     stationary_s: f64,
     pending_loss: Option<PendingLoss>,
+    /// The latest pit lane loss measured here, for the shared store.
+    pub(crate) last_measured_loss: Option<(String, f64)>,
     stint_start: Option<f64>,
 
     /// Lift-and-coast on the lap in progress: telemetry samples on track,
@@ -623,6 +623,7 @@ impl Engine {
         }
         info!("Strategy: pit lane loss at {} measured {:.1} s (stationary {:.1} s)", self.track, lane, p.stationary_s);
         self.pit_loss.add(&self.track, lane);
+        self.last_measured_loss = Some((self.track.clone(), lane));
         true
     }
 
@@ -834,12 +835,17 @@ impl Engine {
 ///
 /// `rx` is a subscription to the same channel the plan goes out on; the
 /// engine's own messages come back on it and are skipped.
+///
+/// `dir` holds this engine's settings (`strategy.json`): the main data folder
+/// on a driver's bridge, the team's folder on a hub.
 pub async fn run(
     mut rx: broadcast::Receiver<Arc<ServerMessage>>,
     tx: broadcast::Sender<Arc<ServerMessage>>,
     mut config_rx: mpsc::UnboundedReceiver<StrategyConfig>,
+    dir: PathBuf,
 ) {
-    let mut engine = Engine::new(load_json::<StrategyConfig>("strategy.json").sanitized(), load_json("pit_loss.json"));
+    let initial_loss = shared_pit_loss().lock().map(|s| s.clone()).unwrap_or_default();
+    let mut engine = Engine::new(load_json::<StrategyConfig>(&dir, "strategy.json").sanitized(), initial_loss);
     let mut refresh = tokio::time::interval(REFRESH);
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let send = |engine: &Engine| {
@@ -860,7 +866,13 @@ pub async fn run(
                     };
                     let (lap_done, new_loss) = engine.on_message(&value);
                     if new_loss {
-                        save_json("pit_loss.json", engine.pit_loss_store());
+                        if let Some((track, loss)) = engine.last_measured_loss.take() {
+                            if let Ok(mut shared) = shared_pit_loss().lock() {
+                                shared.add(&track, loss);
+                                save_json(&crate::paths::root(), "pit_loss.json", &*shared);
+                                engine.pit_loss = shared.clone();
+                            }
+                        }
                     }
                     if lap_done {
                         send(&engine);
@@ -871,7 +883,7 @@ pub async fn run(
             },
             Some(cfg) = config_rx.recv() => {
                 engine.cfg = cfg.sanitized();
-                save_json("strategy.json", &engine.cfg);
+                save_json(&dir, "strategy.json", &engine.cfg);
                 send(&engine);
             }
             _ = refresh.tick() => send(&engine),

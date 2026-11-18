@@ -24,8 +24,8 @@
 pub mod verify;
 
 use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rmpv::Value;
@@ -193,24 +193,23 @@ fn today() -> String {
     format!("day-{days}")
 }
 
-fn data_dir() -> PathBuf {
-    std::env::var("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")).unwrap_or_else(|_| PathBuf::from(".")))
-        .join("LMUPitwall")
+fn load<T: serde::de::DeserializeOwned + Default>(dir: &Path, name: &str) -> T {
+    std::fs::read(dir.join(name)).ok().and_then(|d| serde_json::from_slice(&d).ok()).unwrap_or_default()
 }
 
-fn load<T: serde::de::DeserializeOwned + Default>(name: &str) -> T {
-    std::fs::read(data_dir().join(name)).ok().and_then(|d| serde_json::from_slice(&d).ok()).unwrap_or_default()
-}
-
-fn save<T: Serialize>(name: &str, v: &T) {
-    let dir = data_dir();
-    let _ = std::fs::create_dir_all(&dir);
+fn save<T: Serialize>(dir: &Path, name: &str, v: &T) {
+    let _ = std::fs::create_dir_all(dir);
     let tmp = dir.join(format!("{name}.tmp"));
     if std::fs::write(&tmp, serde_json::to_vec_pretty(v).unwrap_or_default()).is_ok() {
         let _ = std::fs::rename(tmp, dir.join(name));
     }
+}
+
+/// Today's spending, one count for the whole process: on a hub every team's
+/// AI draws on the same money. Kept in `ai_usage.json` in the main folder.
+fn shared_spend() -> &'static Mutex<DayUsage> {
+    static SPEND: OnceLock<Mutex<DayUsage>> = OnceLock::new();
+    SPEND.get_or_init(|| Mutex::new(load(&crate::paths::root(), "ai_usage.json")))
 }
 
 // ---------------------------------------------------------------------------
@@ -807,13 +806,17 @@ impl Ai {
 }
 
 /// Run on a broadcast stream until it closes; send `AiFeed` on the same channel.
+/// `dir` holds the AI settings (`ai.json`): the main data folder on a
+/// driver's bridge, the team's folder on a hub.
 pub async fn run(
     mut rx: broadcast::Receiver<Arc<ServerMessage>>,
     tx: broadcast::Sender<Arc<ServerMessage>>,
     mut commands: mpsc::UnboundedReceiver<AiCommand>,
+    dir: PathBuf,
 ) {
     let key = std::env::var(KEY_ENV).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
-    let mut ai = Ai::new(load::<AiConfig>("ai.json").sanitized(), key, load("ai_usage.json"));
+    let spent = shared_spend().lock().map(|d| d.clone()).unwrap_or_default();
+    let mut ai = Ai::new(load::<AiConfig>(&dir, "ai.json").sanitized(), key, spent);
     info!("AI comments: {} (API key {})", if ai.cfg.enabled { "on" } else { "off" }, if ai.key.is_some() { "present" } else { "absent" });
 
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(String, Option<String>, f64, i64, Instant, Outcome, String, u64)>();
@@ -884,7 +887,7 @@ pub async fn run(
             Some(cmd) = commands.recv() => match cmd {
                 AiCommand::Config(c) => {
                     ai.cfg = c.sanitized();
-                    save("ai.json", &ai.cfg);
+                    save(&dir, "ai.json", &ai.cfg);
                     ai.last_error = None;
                     send(&ai);
                 }
@@ -913,9 +916,15 @@ pub async fn run(
                 match outcome {
                     Outcome::Ok { text, refused, model, usage } => {
                         let cost = cost_usd(&model, &usage);
-                        ai.day.calls += 1;
-                        ai.day.cost_usd += cost;
-                        save("ai_usage.json", &ai.day);
+                        if let Ok(mut shared) = shared_spend().lock() {
+                            if shared.day != ai.day.day {
+                                *shared = ai.day.clone();
+                            }
+                            shared.calls += 1;
+                            shared.cost_usd += cost;
+                            save(&crate::paths::root(), "ai_usage.json", &*shared);
+                            ai.day = shared.clone();
+                        }
                         let unverified = if refused { Vec::new() } else { verify::unverified(&text, &snapshot_text) };
                         let withheld = !unverified.is_empty() && !ai.cfg.show_unverified;
                         if !unverified.is_empty() {
@@ -949,7 +958,7 @@ pub async fn run(
                         warn!("AI request failed: {}", message);
                         if disable {
                             ai.cfg.enabled = false;
-                            save("ai.json", &ai.cfg);
+                            save(&dir, "ai.json", &ai.cfg);
                         }
                         if let Some(d) = retry_after {
                             ai.pause_until = Some(Instant::now() + d);
@@ -960,6 +969,12 @@ pub async fn run(
                 send(&ai);
             }
             _ = tick.tick() => {
+                // What the other teams spent counts against the same budget.
+                if let Ok(shared) = shared_spend().lock() {
+                    if shared.day == today() {
+                        ai.day = shared.clone();
+                    }
+                }
                 ai.roll_day();
                 let ready = !ai.busy && ai.last_any.map(|t| t.elapsed() >= MANUAL_MIN_INTERVAL).unwrap_or(true);
                 if ai.queued_question.is_some() && ready && ai.blocked().is_none() {

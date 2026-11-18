@@ -21,10 +21,12 @@ mod post_race;
 mod protocol;
 mod race;
 mod recording;
+mod paths;
 mod session_kind;
 mod track_store;
 mod shared_memory;
 mod strategy;
+mod team;
 mod tyres;
 mod websocket;
 
@@ -1237,105 +1239,86 @@ async fn main() -> Result<()> {
         port, config.telemetry_fps, config.scoring_fps
     );
 
-    // Watch channel for latest AllDriversUpdate (sent to new clients on connect).
-    let (all_drivers_tx, all_drivers_rx) =
-        tokio::sync::watch::channel::<Option<ServerMessage>>(None);
-
     // Watch channel for VersionInfo (sent to new clients on connect once check completes).
     let (version_info_tx, version_info_rx) =
         tokio::sync::watch::channel::<Option<ServerMessage>>(None);
 
-    // Watch channel for ConnectionStatus (sent to new clients on connect so they
-    // never see "Waiting" when LMU was already running before the dashboard opened).
-    // Seeded with "game not running", so a client that connects before LMU
-    // starts is told so explicitly instead of having to infer it from silence.
-    let (connection_status_tx, connection_status_rx) =
-        tokio::sync::watch::channel::<Option<ServerMessage>>(Some(
-            ServerMessage::ConnectionStatus {
-                game_connected: false,
-                plugin_version: String::new(),
-                telemetry_valid: true,
-                telemetry_warning: None,
-                session_active: false,
-            },
-        ));
-
     let state = Arc::new(RwLock::new(TelemetryState::new()));
-    let game_status_rx = connection_status_rx.clone();
-    let (hub_tx, hub_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (strategy_tx, strategy_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (ai_tx, ai_rx) = tokio::sync::mpsc::unbounded_channel();
-    let ws    = Arc::new(WebSocketServer::new(
+    // A hub's team commands (create, rename, remove, move a driver).
+    let (team_requests_tx, team_requests_rx) = tokio::sync::mpsc::unbounded_channel();
+    let ws = Arc::new(WebSocketServer::new(
         port,
-        all_drivers_rx,
         version_info_rx,
-        connection_status_rx,
         access.clone(),
-        config.hub.then_some(hub_tx),
-        strategy_tx,
-        ai_tx,
+        config.hub.then_some(team_requests_tx),
     ));
 
-    // Strategy engine: reads the broadcast stream (this bridge's, a replay's,
-    // or on a hub the relayed driver's) and adds the plan to it.
-    tokio::spawn(strategy::run(ws.broadcaster().subscribe(), ws.broadcaster(), strategy_rx));
-    // Race events and lap history, from the same stream.
-    tokio::spawn(race::run(ws.broadcaster().subscribe(), ws.broadcaster()));
-    // Session history in SQLite, from the same stream.
-    tokio::spawn(history::run(ws.broadcaster().subscribe()));
-    // AI engineer comments (off unless enabled and ANTHROPIC_API_KEY is set).
-    tokio::spawn(ai::run(ws.broadcaster().subscribe(), ws.broadcaster(), ai_rx));
+    // Hub mode: the drivers' bridges stand in for the game, one team per car.
+    // Replay mode: a recorded session does. Either way the two tasks that read
+    // LMU are simply not started.
+    let (hub_busy_tx, hub_busy_rx) = watch::channel(false);
+    let replaying = config.replay.is_some();
+    let game_status_rx;
+    if config.hub {
+        info!("Running as a hub on port {}", port);
+        let store = Arc::new(hub::teams::TeamsStore::open(&paths::root()));
+        // Started before the server accepts anyone: a dashboard always finds
+        // its team.
+        let teams = hub::manager::start_teams(&store, &ws);
+        tokio::spawn(hub::manager::run(ws.clone(), store, teams, team_requests_rx, hub_busy_tx));
+        // A hub has no game of its own (the idle shutdown watches hub_busy_rx).
+        game_status_rx = watch::channel(None::<ServerMessage>).1;
+    } else {
+        // A driver's bridge: one team, its own car, in the main data folder.
+        let (link, feed, _engines) = team::start("default", paths::root(), None);
+        ws.add_team(link.clone());
+        game_status_rx = link.connection_status_rx.clone();
 
-    // Optional recorder: one more subscriber on the broadcast channel.
+        if let Some(path) = config.replay.clone() {
+            let rec = match recording::Recording::load(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Cannot replay: {:#}", e);
+                    return Err(e);
+                }
+            };
+            tokio::spawn(recording::replay(
+                rec,
+                config.replay_speed,
+                !config.replay_once,
+                feed.tx.clone(),
+                feed.connection_status_tx,
+                feed.all_drivers_tx,
+            ));
+        } else {
+            // Task 1 + 3: Shared memory polling + health check
+            {
+                let state = state.clone();
+                let ws    = ws.clone();
+                let ws_port = port;
+                let connection_status_tx = feed.connection_status_tx;
+                tokio::spawn(async move { task_polling(state, ws, ws_port, connection_status_tx).await });
+            }
+
+            // Task 2: Rate-limited WebSocket broadcaster
+            {
+                let state           = state.clone();
+                let ws              = ws.clone();
+                let tel_fps         = config.telemetry_fps;
+                let scoring_fps     = config.scoring_fps;
+                let all_drivers_tx  = feed.all_drivers_tx;
+                tokio::spawn(async move {
+                    task_broadcaster(state, ws, tel_fps, scoring_fps, all_drivers_tx).await
+                });
+            }
+        }
+    }
+
+    // Optional recorder: one more subscriber on the (first team's) stream.
     if let Some(path) = config.record.clone() {
         let rx = ws.broadcaster().subscribe();
         tokio::spawn(recording::record(path, rx));
     }
-
-    // Hub mode: the drivers' bridges stand in for the game.
-    let (hub_busy_tx, hub_busy_rx) = watch::channel(false);
-    // Replay mode: a recorded session stands in for the game. Either way the
-    // two tasks that read LMU are simply not started.
-    let replaying = config.replay.is_some();
-    if config.hub {
-        info!("Running as a hub on port {}", port);
-        tokio::spawn(hub::run(ws.clone(), hub_rx, connection_status_tx, all_drivers_tx, hub_busy_tx));
-    } else if let Some(path) = config.replay.clone() {
-        let rec = match recording::Recording::load(&path) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::error!("Cannot replay: {:#}", e);
-                return Err(e);
-            }
-        };
-        tokio::spawn(recording::replay(
-            rec,
-            config.replay_speed,
-            !config.replay_once,
-            ws.broadcaster(),
-            connection_status_tx,
-            all_drivers_tx,
-        ));
-    } else {
-    // Task 1 + 3: Shared memory polling + health check
-    {
-        let state = state.clone();
-        let ws    = ws.clone();
-        let ws_port = port;
-        tokio::spawn(async move { task_polling(state, ws, ws_port, connection_status_tx).await });
-    }
-
-    // Task 2: Rate-limited WebSocket broadcaster
-    {
-        let state           = state.clone();
-        let ws              = ws.clone();
-        let tel_fps         = config.telemetry_fps;
-        let scoring_fps     = config.scoring_fps;
-        tokio::spawn(async move {
-            task_broadcaster(state, ws, tel_fps, scoring_fps, all_drivers_tx).await
-        });
-    }
-    } // end of live (non-replay) tasks
 
     // Combined HTTP + WebSocket server
     {
@@ -1363,7 +1346,7 @@ async fn main() -> Result<()> {
 
     // GitHub update check — runs once in background, broadcasts VersionInfo.
     {
-        let ws_broadcaster = ws.broadcaster();
+        let ws_all = ws.clone();
         tokio::spawn(async move {
             // Small delay so startup completes before the HTTP call.
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -1396,7 +1379,7 @@ async fn main() -> Result<()> {
             };
 
             let _ = version_info_tx.send(Some(msg.clone()));
-            ws_broadcaster.send(std::sync::Arc::new(msg)).ok();
+            ws_all.broadcast_all(msg);
         });
     }
 

@@ -93,19 +93,21 @@ pub fn init(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-static DB: OnceLock<Result<Mutex<Connection>, String>> = OnceLock::new();
-
-/// The process-wide history database in `%APPDATA%\LMUPitwall\history.sqlite`.
-pub fn db() -> Result<&'static Mutex<Connection>> {
-    DB.get_or_init(|| {
-        let dir = std::env::var("APPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".config")).unwrap_or_else(|_| ".".into()))
-            .join("LMUPitwall");
-        open(&dir.join("history.sqlite")).map(Mutex::new).map_err(|e| format!("{e:#}"))
-    })
-    .as_ref()
-    .map_err(|e| anyhow::anyhow!("{e}"))
+/// The history database of a data folder, `<dir>\history.sqlite`: the main
+/// folder on a driver's bridge, each team's folder on a hub. Opened once and
+/// kept for the life of the process (a hub has a handful of teams).
+pub fn db(dir: &std::path::Path) -> Result<&'static Mutex<Connection>> {
+    type Open = Result<&'static Mutex<Connection>, String>;
+    static DBS: OnceLock<Mutex<std::collections::HashMap<std::path::PathBuf, Open>>> = OnceLock::new();
+    let mut dbs = DBS.get_or_init(Default::default).lock().map_err(|_| anyhow::anyhow!("history databases busy"))?;
+    dbs.entry(dir.to_path_buf())
+        .or_insert_with(|| {
+            open(&dir.join("history.sqlite"))
+                .map(|c| &*Box::leak(Box::new(Mutex::new(c))))
+                .map_err(|e| format!("{e:#}"))
+        })
+        .clone()
+        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 // ---------------------------------------------------------------------------

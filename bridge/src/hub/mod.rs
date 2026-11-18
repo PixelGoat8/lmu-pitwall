@@ -22,9 +22,10 @@
 //! from the hub's own database, not forwarded to a driver's bridge.
 
 pub mod logic;
+pub mod manager;
+pub mod teams;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -34,12 +35,11 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::{self, Message};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::access;
 use crate::protocol::messages::{ClientCommand, HubSourceStatus, HubStintInfo, ServerMessage};
 use crate::recording::{field, message_type};
-use crate::websocket::server::WebSocketServer;
 use logic::{choose_source, Candidate, ScoringSummary, StintTracker};
 
 /// Default port of a hub, so it can run beside a bridge on the same PC.
@@ -72,7 +72,7 @@ const RELAYED: [&str; 8] = [
 // Configuration (hub.json)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceConfig {
     pub id: String,
     pub label: String,
@@ -87,41 +87,6 @@ pub struct HubConfig {
     /// Id of the bridge the engineer pinned; `None` = follow the driver.
     #[serde(default)]
     pub follow: Option<String>,
-}
-
-impl HubConfig {
-    fn path() -> PathBuf {
-        let base = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                std::env::var("HOME")
-                    .map(|h| PathBuf::from(h).join(".config"))
-                    .unwrap_or_else(|_| PathBuf::from("."))
-            });
-        base.join("LMUPitwall").join("hub.json")
-    }
-
-    pub fn load() -> Self {
-        std::fs::read(Self::path())
-            .ok()
-            .and_then(|d| serde_json::from_slice(&d).ok())
-            .unwrap_or_default()
-    }
-
-    fn save(&self) {
-        let path = Self::path();
-        let write = || -> std::io::Result<()> {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let tmp = path.with_extension("json.tmp");
-            std::fs::write(&tmp, serde_json::to_vec_pretty(self).unwrap_or_default())?;
-            std::fs::rename(&tmp, &path)
-        };
-        if let Err(e) = write() {
-            warn!("Could not save hub.json: {}", e);
-        }
-    }
 }
 
 /// Turn the link a bridge's dashboard shows (`http://host:9000/?token=…`)
@@ -167,6 +132,8 @@ fn host_of(ws_url: &str) -> String {
 #[derive(Debug, Clone)]
 pub enum HubCommand {
     AddSource { link: String, label: Option<String> },
+    /// A bridge moved here from another team, link and all.
+    AddConfigured(SourceConfig),
     RemoveSource { id: String },
     Follow { id: Option<String> },
 }
@@ -324,8 +291,35 @@ impl Source {
     }
 }
 
+/// What a team's hub coordinator tells the team list: who it follows, in
+/// which car.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TeamSummary {
+    pub sources: u32,
+    pub active: Option<String>,
+    pub driving: bool,
+    pub car_name: String,
+    pub driver: String,
+    /// A bridge has a live session: the hub is in use.
+    pub busy: bool,
+}
+
+/// One team's coordinator: its stream, where its list is kept, and the
+/// snapshots its clients start from.
+pub struct HubTeam {
+    pub id: String,
+    pub sources: Vec<SourceConfig>,
+    pub follow: Option<String>,
+    pub store: Arc<teams::TeamsStore>,
+    pub feed: crate::team::TeamFeed,
+    pub summary_tx: watch::Sender<TeamSummary>,
+}
+
 struct Hub {
-    ws: Arc<WebSocketServer>,
+    team_id: String,
+    store: Arc<teams::TeamsStore>,
+    tx: tokio::sync::broadcast::Sender<Arc<ServerMessage>>,
+    summary_tx: watch::Sender<TeamSummary>,
     events_tx: mpsc::UnboundedSender<Event>,
     sources: Vec<Source>,
     pinned: Option<String>,
@@ -333,7 +327,6 @@ struct Hub {
     stints: StintTracker,
     connection_status_tx: watch::Sender<Option<ServerMessage>>,
     all_drivers_tx: watch::Sender<Option<ServerMessage>>,
-    busy_tx: watch::Sender<bool>,
 }
 
 fn no_session_status() -> ServerMessage {
@@ -364,11 +357,29 @@ impl Hub {
     }
 
     fn save(&self) {
-        HubConfig {
-            sources: self.sources.iter().map(|s| s.cfg.clone()).collect(),
-            follow: self.pinned.clone(),
-        }
-        .save();
+        self.store.set_sources(&self.team_id, self.sources.iter().map(|s| s.cfg.clone()).collect(), self.pinned.clone());
+    }
+
+    fn send(&self, msg: ServerMessage) {
+        let _ = self.tx.send(Arc::new(msg));
+    }
+
+    /// Tell the team list who is followed, in which car.
+    fn publish_summary(&self) {
+        let active = self.active.as_ref().and_then(|i| self.sources.iter().find(|s| &s.cfg.id == i));
+        let summary = TeamSummary {
+            sources: self.sources.len() as u32,
+            active: active.map(|s| s.cfg.label.clone()),
+            driving: active.map(|s| s.driving()).unwrap_or(false),
+            car_name: active.and_then(|s| s.summary.as_ref()).map(|x| x.car_name.clone()).unwrap_or_default(),
+            driver: active.and_then(|s| s.summary.as_ref()).map(|x| x.driver_name.clone()).unwrap_or_default(),
+            busy: self.sources.iter().any(|s| s.session_active),
+        };
+        self.summary_tx.send_if_modified(|old| {
+            let changed = *old != summary;
+            *old = summary;
+            changed
+        });
     }
 
     fn status_message(&self) -> ServerMessage {
@@ -436,7 +447,7 @@ impl Hub {
             }
             _ => {}
         }
-        self.ws.broadcast(wrapped);
+        self.send(wrapped);
     }
 
     /// Re-run the selection; on a change, bring clients onto the new bridge.
@@ -453,8 +464,8 @@ impl Hub {
             })
             .collect();
         let chosen = choose_source(&cands, self.active.as_deref(), self.pinned.as_deref());
-        let _ = self.busy_tx.send(self.sources.iter().any(|s| s.session_active));
         if chosen == self.active {
+            self.publish_summary();
             return;
         }
 
@@ -476,7 +487,7 @@ impl Hub {
                     None => {
                         let m = no_session_status();
                         let _ = self.connection_status_tx.send(Some(m.clone()));
-                        self.ws.broadcast(m);
+                        self.send(m);
                     }
                 }
                 // Not the telemetry: it arrives many times a second anyway,
@@ -493,10 +504,11 @@ impl Hub {
                 let m = no_session_status();
                 let _ = self.connection_status_tx.send(Some(m.clone()));
                 let _ = self.all_drivers_tx.send(None);
-                self.ws.broadcast(m);
+                self.send(m);
             }
         }
-        self.ws.broadcast(self.status_message());
+        self.send(self.status_message());
+        self.publish_summary();
     }
 
     fn on_link(&mut self, id: &str, link: Link) {
@@ -515,7 +527,7 @@ impl Hub {
             src.clear_live();
         }
         self.reselect();
-        self.ws.broadcast(self.status_message());
+        self.send(self.status_message());
     }
 
     fn on_frame(&mut self, id: &str, msg: Value) {
@@ -575,9 +587,10 @@ impl Hub {
                 if let Some(summary) = &src.summary {
                     let label = src.cfg.label.clone();
                     if self.stints.on_scoring(&label, summary) {
-                        self.ws.broadcast(self.stints_message());
+                        self.send(self.stints_message());
                     }
                 }
+                self.publish_summary();
             }
             "TelemetryUpdate" if src.driving() => {
                 if let Some(fuel) = field(&msg, "fuel").and_then(logic::num) {
@@ -608,6 +621,15 @@ impl Hub {
                 }
                 Err(e) => self.error(&format!("Could not add the bridge: {e}.")),
             },
+            HubCommand::AddConfigured(cfg) => {
+                if !self.sources.iter().any(|s| s.cfg.id == cfg.id) {
+                    info!("Hub: {} joins team {}", cfg.label, self.team_id);
+                    let src = self.spawn_source(cfg);
+                    self.sources.push(src);
+                    self.save();
+                    self.reselect();
+                }
+            }
             HubCommand::RemoveSource { id } => {
                 if let Some(i) = self.sources.iter().position(|s| s.cfg.id == id) {
                     let src = self.sources.remove(i);
@@ -626,11 +648,11 @@ impl Hub {
                 self.reselect();
             }
         }
-        self.ws.broadcast(self.status_message());
+        self.send(self.status_message());
     }
 
     fn error(&self, message: &str) {
-        self.ws.broadcast(ServerMessage::HubError { message: message.to_string() });
+        self.send(ServerMessage::HubError { message: message.to_string() });
     }
 }
 
@@ -638,31 +660,27 @@ impl Hub {
 ///
 /// `busy_tx` is set while any bridge has a live session; the idle shutdown
 /// uses it the way a bridge uses "the game is running".
-pub async fn run(
-    ws: Arc<WebSocketServer>,
-    mut commands: mpsc::UnboundedReceiver<HubCommand>,
-    connection_status_tx: watch::Sender<Option<ServerMessage>>,
-    all_drivers_tx: watch::Sender<Option<ServerMessage>>,
-    busy_tx: watch::Sender<bool>,
-) {
-    let cfg = HubConfig::load();
+pub async fn run(team: HubTeam, mut commands: mpsc::UnboundedReceiver<HubCommand>) {
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let mut hub = Hub {
-        ws,
+        team_id: team.id.clone(),
+        store: team.store,
+        tx: team.feed.tx,
+        summary_tx: team.summary_tx,
         events_tx,
         sources: Vec::new(),
-        pinned: cfg.follow.clone(),
+        pinned: team.follow.clone(),
         active: None,
         stints: StintTracker::new(),
-        connection_status_tx,
-        all_drivers_tx,
-        busy_tx,
+        connection_status_tx: team.feed.connection_status_tx,
+        all_drivers_tx: team.feed.all_drivers_tx,
     };
-    info!("Hub mode: {} bridge(s) configured", cfg.sources.len());
-    for sc in cfg.sources {
+    info!("Hub: team {} with {} bridge(s)", team.id, team.sources.len());
+    for sc in team.sources {
         let src = hub.spawn_source(sc);
         hub.sources.push(src);
     }
+    hub.publish_summary();
 
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut ticks = 0u64;
@@ -677,9 +695,9 @@ pub async fn run(
                 // Periodic, so a dashboard that has just connected is current
                 // within a second without the hub tracking who has seen what.
                 ticks += 1;
-                hub.ws.broadcast(hub.status_message());
+                hub.send(hub.status_message());
                 if ticks % 5 == 0 {
-                    hub.ws.broadcast(hub.stints_message());
+                    hub.send(hub.stints_message());
                 }
             }
         }
