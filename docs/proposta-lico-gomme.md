@@ -1,7 +1,9 @@
 # Proposta: LiCo contro sosta, e piano gomme
 
-Stato: **proposta**, niente di questo è ancora nel codice. Descrive due
-aggiunte al [motore di strategia](strategia.md):
+Stato: **proposta**. Del primo passo (quanto costa il LiCo in tempo) c'è la
+misura in gara, descritta in [strategia.md](strategia.md#lift-and-coast-lico);
+il resto non è ancora nel codice. Descrive due aggiunte al
+[motore di strategia](strategia.md):
 
 1. **LiCo contro sosta**: durante un'endurance, dire se conviene fare lift and
    coast per risparmiare una sosta, tenendo conto di quanto tempo costa il
@@ -91,19 +93,25 @@ pochi punti della pista: dove il pilota alza il piede prima della frenata,
 fino all'uscita della curva. Invece di guardare il tempo sul giro intero, si
 guardano solo quei tratti:
 
-1. Il giro viene diviso in tratti brevi per distanza percorsa (per esempio
-   50 m). Per ogni tratto si misurano tempo, carburante consumato e se il
-   pilota stava veleggiando. La distanza viene dal gioco (`mLapDist`, 5 volte
-   al secondo, interpolata con la velocità); il carburante dell'auto di chi
-   guida si legge di continuo dalla telemetria, non solo sul traguardo.
+1. Il giro viene diviso in tratti brevi (10 m). Per ogni tratto si misurano
+   tempo, carburante consumato e se il pilota stava veleggiando. I tratti si
+   mettono in fila in base a **dove si trova l'auto** (la posizione nella
+   telemetria, proiettata sulla traccia del primo giro pulito): la distanza
+   calcolata dalla velocità sbaglia di qualche metro con la traiettoria (un
+   tornante preso un metro più largo è tre metri più lungo), e in frenata
+   qualche metro vale centesimi di secondo per tratto. Il carburante dell'auto
+   di chi guida si legge di continuo dalla telemetria, non solo sul traguardo.
 2. Per ogni tratto c'è un **riferimento**: la mediana dei giri recenti senza
-   LiCo in più. Si aggiorna giro per giro, così segue gomme e peso.
+   LiCo in più. Le gomme e il peso cambiano il passo di tutto il giro, zone
+   comprese: il riferimento viene portato al passo che il giro ha fuori dalle
+   zone.
 3. Una **zona di LiCo** è un gruppo di tratti in cui il pilota ha veleggiato
    più del riferimento, dal punto in cui alza il piede all'uscita della curva
    dopo. In ogni zona: secondi persi e carburante risparmiato rispetto al
    riferimento.
-4. Le zone con un'auto vicina davanti (i distacchi sono già noti) si scartano:
-   lì il tempo perso è traffico, non LiCo.
+4. Le zone con un'auto vicina (40 m davanti, 20 m dietro, dalle posizioni in
+   pista di tutte le auto) si scartano: lì il tempo perso può essere traffico,
+   non LiCo.
 5. Somma delle zone = **costo del LiCo su quel giro** (δ) e carburante
    risparmiato. Giro dopo giro si ottiene la curva *risparmio → secondi persi*.
 
@@ -210,6 +218,11 @@ pianificatore sceglie:
 **Vincoli**: nessuna gomma sotto il limite di usura (più un margine) prima
 del cambio; gomme nuove usate ≤ dotazione − riserva; stint massimo per pilota.
 
+**Limite di usura**: per la nostra esperienza le gomme restano usabili fino al
+50–60 % di battistrada. Il limite predefinito del widget oggi è 30 % (*Tyre
+limit* nelle impostazioni), troppo basso per noi: va alzato, ed è il limite
+che il piano gomme usa per dire se un doppio stint regge.
+
 **Cosa minimizza**: tempo da fermo in più per le gomme + tempo perso al giro
 con gomme vecchie (calo di passo × età × giri) + giro di uscita con gomme
 fredde, se non ci sono termocoperte.
@@ -244,7 +257,7 @@ secondi persi al giro con gomme vecchie, e gomme rimaste per dopo.
 
 - **Piano treni**: *"S1: nessun cambio · S2: 4 nuove · S3: solo anteriori ·
   S4: nessun cambio, usati 2,5 treni su 3, riserva 1"*.
-- **Doppio stint**: *"regge: anteriore sinistra arriva al 41 % (limite 30 %)"*,
+- **Doppio stint**: *"regge: anteriore sinistra arriva al 58 % (limite 50 %)"*,
   oppure *"no: posteriore sinistra al limite al giro 87, 6 giri prima della
   sosta"*.
 - **Riserva**: 1 treno (o 2 gomme) tenuto per gli imprevisti; a un certo
@@ -297,7 +310,8 @@ Con [`tools/rest-probe`](../tools/rest-probe) e una sessione vera:
    uscita con gomme nuove.
 4. **`mLiftAndCoastProgress`**: cosa vale quando si accendono le luci LiCo.
 5. **Carburante e VE durante il giro**: `mFuel` dell'auto di chi guida scende
-   in modo continuo e con abbastanza precisione da misurare un tratto di 50 m?
+   in modo continuo e con abbastanza precisione da misurare un tratto di 10 m?
+   (Il bridge lo usa solo se prende almeno 20 valori diversi in un giro.)
    E `mVirtualEnergy` della nostra auto si aggiorna durante il giro o solo sul
    traguardo? Se solo sul traguardo, il risparmio per zona si misura col
    carburante e si converte in VE col rapporto misurato giro per giro.
@@ -309,8 +323,9 @@ carburante) e quanti treni dà di solito il server.
 
 ## Ordine di lavoro proposto
 
-1. Costo del LiCo (δ): confronto per zone durante la gara, profilo salvato
-   per pista, auto e pilota.
+1. Costo del LiCo (δ): confronto per zone durante la gara (**fatto**, in
+   `bridge/src/strategy/zones.rs`, da verificare con una gara vera); manca il
+   profilo salvato per pista, auto e pilota.
 2. Bilancio A contro B in `model.rs`: funzioni pure, con test.
 3. Gomme per singola gomma: storia per gomma al posto di `current_set`,
    dotazione e riserva nelle impostazioni.
