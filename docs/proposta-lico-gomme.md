@@ -80,20 +80,63 @@ Note:
 
 ### Il costo del LiCo (δ)
 
-È la parte difficile: il tempo sul giro balla di qualche decimo, e il calo
-delle gomme e l'auto che si alleggerisce si confondono col LiCo.
+È la parte difficile. Sul giro intero il tempo balla di qualche decimo
+(traffico, un errore in una curva), e il calo delle gomme e l'auto che si
+alleggerisce si confondono col LiCo. Una sessione di prova dedicata a
+misurarlo non è pratica, quindi il costo va misurato **durante la gara**, dai
+giri normali.
 
-- **In gara**: regressione del tempo sul giro sui secondi di LiCo e sul numero
-  di giro (per togliere la tendenza di gomme e carburante), sui giri puliti
-  della sessione. Come per la resa del LiCo, serve che il pilota abbia già
-  veleggiato in modi diversi.
-- **Calibrazione in prova**, più affidabile: 3 livelli di LiCo (nessuno,
-  leggero, estremo) per circa 5 giri ciascuno. Il risultato è una curva
-  *consumo risparmiato → secondi persi a giro*, salvata per pista e auto come
-  la perdita in pit lane. In gara la misura dal vivo la corregge.
+**Metodo principale: il confronto per zone.** Il LiCo costa tempo solo in
+pochi punti della pista: dove il pilota alza il piede prima della frenata,
+fino all'uscita della curva. Invece di guardare il tempo sul giro intero, si
+guardano solo quei tratti:
+
+1. Il giro viene diviso in tratti brevi per distanza percorsa (per esempio
+   50 m). Per ogni tratto si misurano tempo, carburante consumato e se il
+   pilota stava veleggiando. La distanza viene dal gioco (`mLapDist`, 5 volte
+   al secondo, interpolata con la velocità); il carburante dell'auto di chi
+   guida si legge di continuo dalla telemetria, non solo sul traguardo.
+2. Per ogni tratto c'è un **riferimento**: la mediana dei giri recenti senza
+   LiCo in più. Si aggiorna giro per giro, così segue gomme e peso.
+3. Una **zona di LiCo** è un gruppo di tratti in cui il pilota ha veleggiato
+   più del riferimento, dal punto in cui alza il piede all'uscita della curva
+   dopo. In ogni zona: secondi persi e carburante risparmiato rispetto al
+   riferimento.
+4. Le zone con un'auto vicina davanti (i distacchi sono già noti) si scartano:
+   lì il tempo perso è traffico, non LiCo.
+5. Somma delle zone = **costo del LiCo su quel giro** (δ) e carburante
+   risparmiato. Giro dopo giro si ottiene la curva *risparmio → secondi persi*.
+
+Il rumore scende molto, perché conta solo qualche centinaio di metri per
+curva invece di tutto il giro, e un errore o un doppiaggio altrove non
+sporca la misura. Bastano 2–3 giri di LiCo per avere un numero.
+
+C'è anche un vantaggio in più: si vede **in quali curve il LiCo costa meno**
+(secondi persi per litro risparmiato). L'ingegnere può dire al pilota dove
+alzare il piede e dove no, per ottenere lo stesso risparmio perdendo meno.
+
+**Come si usa per decidere, senza conoscere il costo prima:**
+
+1. Il widget mostra il pareggio δ\*: *"il LiCo conviene se costa meno di
+   1,4 s/giro"*.
+2. Il pilota inizia il LiCo.
+3. Dopo 2–3 giri il confronto per zone dà il costo vero: *"stai perdendo
+   0,9 s/giro, conviene"* oppure *"1,8 s/giro, non conviene: smetti"*.
+
+Provare costa poco: il carburante risparmiato in quei giri non è perso, perché
+accorcia il rabbocco finale.
+
+**Il profilo si riempie da solo.** Ogni sessione in cui un pilota fa LiCo,
+prove libere e gare comprese, lascia le sue zone misurate. Si salvano per
+pista, auto e pilota, come la perdita in pit lane. Alla gara dopo c'è già
+una stima prima ancora di iniziare.
+
+**Controllo sul giro intero**: la regressione del tempo sul giro sui secondi
+di LiCo e sul numero di giro, sui giri puliti, resta come verifica. Se
+dice qualcosa di molto diverso dalle zone, il widget lo segnala.
 
 Oggi a occhio: con un pieno facciamo circa +2 giri senza perdere molto, +3
-con LiCo estremo. La calibrazione serve a trasformarlo in numeri.
+con LiCo estremo. Il confronto per zone serve a trasformarlo in numeri.
 
 Cosa dice chi l'ha misurato (nessuna regola generale, solo casi):
 
@@ -253,7 +296,12 @@ Con [`tools/rest-probe`](../tools/rest-probe) e una sessione vera:
 3. **Termocoperte** (`SESSSET_tire_warmers`): senza, quanto costa il giro di
    uscita con gomme nuove.
 4. **`mLiftAndCoastProgress`**: cosa vale quando si accendono le luci LiCo.
-5. **VE degli avversari online** nella nostra classe: misurata in LMGT3 a
+5. **Carburante e VE durante il giro**: `mFuel` dell'auto di chi guida scende
+   in modo continuo e con abbastanza precisione da misurare un tratto di 50 m?
+   E `mVirtualEnergy` della nostra auto si aggiorna durante il giro o solo sul
+   traguardo? Se solo sul traguardo, il risparmio per zona si misura col
+   carburante e si converte in VE col rapporto misurato giro per giro.
+6. **VE degli avversari online** nella nostra classe: misurata in LMGT3 a
    Bahrain, da confermare per le altre.
 
 Da sapere dalla squadra: la classe in cui corriamo di solito (VE o
@@ -261,8 +309,8 @@ carburante) e quanti treni dà di solito il server.
 
 ## Ordine di lavoro proposto
 
-1. Costo del LiCo (δ): misura in gara e calibrazione in prova, salvata per
-   pista e auto.
+1. Costo del LiCo (δ): confronto per zone durante la gara, profilo salvato
+   per pista, auto e pilota.
 2. Bilancio A contro B in `model.rs`: funzioni pure, con test.
 3. Gomme per singola gomma: storia per gomma al posto di `current_set`,
    dotazione e riserva nelle impostazioni.
