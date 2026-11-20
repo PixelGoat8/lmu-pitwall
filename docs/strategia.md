@@ -20,6 +20,7 @@ altro giro verde").
 | Tyres | Giri sul treno attuale, gomma che si consuma di più, giri al limite di usura, calo di passo per giro, gomme nuove sì o no | Usura e tempi sul giro misurati |
 | Pit lane | Perdita in pit lane, e la stima del gioco per il menu box come impostato ora | Misurata a ogni sosta, salvata per pista |
 | Weather | Pioggia o asciutto, acqua in pista, quando è prevista pioggia (o il ritorno all'asciutto) in minuti e giri | Previsione a 5 punti del gioco |
+| Lift and coast cost | Secondi persi a giro col LiCo, carburante risparmiato, costo curva per curva (compare dopo i primi giri col LiCo) | Tempi, velocità, pedali e posizione dalla telemetria, tratto per tratto |
 
 ## Come vengono fatti i conti
 
@@ -88,6 +89,30 @@ altro giro verde").
   rispetto al veleggio, sui giri verdi della sessione. Serve che il pilota
   abbia già veleggiato in modi diversi (almeno 6 giri, con almeno 1,5 s di
   differenza); prima i secondi di LiCo necessari non vengono stimati.
+- **Quanto costa in tempo** (*Lift and coast cost*): misurato curva per curva,
+  non sul tempo del giro, che si muove di qualche decimo per il traffico o un
+  errore. Ogni giro viene diviso in tratti da 10 m, messi in fila in base a
+  dove si trova l'auto in pista: il primo giro pulito della sessione fa da
+  traccia, così una traiettoria più larga non sposta i tratti. Una *zona*
+  va dal punto in cui il pilota veleggia più che nei giri normali all'uscita
+  della curva dopo. Il costo è il tempo perso nelle zone rispetto ai giri
+  normali dello stesso pilota (quelli col veleggio più basso, gli ultimi 5),
+  al passo che il giro ha fuori dalle zone, così le gomme consumate o il
+  serbatoio più leggero non contano come LiCo.
+  - Il numero è la mediana degli ultimi 3 giri con almeno 1 s di veleggio in
+    più. Accanto: i secondi di veleggio in più, il carburante risparmiato nelle
+    zone (se il PC che guida manda il livello durante il giro) e i secondi
+    persi per litro.
+  - Sotto, curva per curva: dove il pilota alza il piede, secondi persi e
+    litri risparmiati. In verde la curva dove il LiCo costa meno per litro, in
+    rosso quella dove costa di più: è lì che conviene chiedere al pilota di
+    alzare prima, o di smettere.
+  - Una zona con un'altra auto a meno di 40 m davanti o 20 m dietro viene
+    scartata (il tempo perso lì può essere traffico). Un giro in cui le zone
+    pulite hanno meno di metà del veleggio in più, o in cui il passo fuori
+    dalle zone non si può misurare, non conta.
+  - Se gli ultimi giri non hanno LiCo, il widget mostra in arancione l'ultima
+    misura (*last measured on laps …*).
 - **Una sosta in meno**: il consumo massimo per giro con cui basta una sosta in
   meno, il risparmio in percentuale e, se misurato, circa quanti secondi di LiCo
   in più servono. La riga compare solo se il risparmio è al massimo del 25 %.
@@ -136,3 +161,9 @@ salvate in `%APPDATA%\LMUPitwall\strategy.json`.
 - Le soglie del LiCo (72 km/h, pedali sotto il 5 %, cambio di 1 s) sono scelte
   a tavolino e verificate solo con sessioni simulate (`--lico` in
   `tools/mock-session`): da controllare in gara.
+- Il costo del LiCo per zone è verificato solo con sessioni simulate. Da
+  controllare con una gara vera registrata (`--record`): che la traccia dalle
+  posizioni regga (cordoli, uscite di pista, pit lane), le soglie del traffico
+  (40 m davanti, 20 m dietro) e quanto varia il numero da un giro all'altro. Per
+  vedere cosa trova in una registrazione, dalla cartella `bridge`:
+  `$env:PWREC = "gara.pwrec"; cargo test lico_cost_of_a_recording -- --ignored --nocapture`.

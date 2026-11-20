@@ -106,6 +106,34 @@ export interface TyreChoice {
   must_change: boolean
 }
 
+/** One corner's share of the lift-and-coast, averaged over the laps measured. */
+export interface LicoCorner {
+  /** Where the driver lifts, metres from the line. */
+  at_m: number
+  cost_s: number
+  extra_coast_s: number
+  fuel_saved: number | null
+  laps: number
+}
+
+/** What lift-and-coast costs, measured zone by zone (bridge/src/strategy/zones.rs). */
+export interface LicoCost {
+  s_per_lap: number
+  /** Coasting per lap beyond the normal laps, seconds. */
+  extra_coast_s: number
+  /** Litres the zones save per lap; null when the level cannot be read along the lap. */
+  fuel_saved_per_lap: number | null
+  s_per_litre: number | null
+  laps: number
+  first_lap: number
+  last_lap: number
+  ref_laps: number
+  ref_coast_s: number
+  traffic_zones: number
+  corners: LicoCorner[]
+  driver: string
+}
+
 export interface PitEstimate {
   total: number
   fuel: number
@@ -158,6 +186,8 @@ export interface StrategyUpdate {
     dry_in_s: number | null
     dry_in_laps: number | null
   }
+  /** What lift-and-coast costs, once the driver has done some. */
+  lico_cost?: LicoCost | null
   notes: string[]
   config: StrategyConfig
 }

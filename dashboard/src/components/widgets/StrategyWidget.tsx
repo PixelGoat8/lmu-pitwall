@@ -3,7 +3,7 @@ import { useTelemetryStore } from '../../stores/telemetryStore'
 import { sendBridgeCommand } from '../../hooks/useWebSocket'
 import { colors, fonts } from '../../styles/theme'
 import { fmtLap } from '../../utils/lapFormat'
-import type { EnergyPlan, StrategyConfig, StrategyUpdate, WhatIf } from '../../types/strategy'
+import type { EnergyPlan, LicoCost, StrategyConfig, StrategyUpdate, WhatIf } from '../../types/strategy'
 
 // Every figure on this widget comes from the bridge's strategy engine; the
 // widget only formats. Missing data shows as "—" and the engine's notes say why.
@@ -56,6 +56,7 @@ export default function StrategyWidget() {
       <Header s={s} onSettings={() => setShowSettings((o) => !o)} settingsOpen={showSettings} />
       {showSettings ? <Settings cfg={s.config} /> : null}
       <Energy s={s} />
+      {s.lico_cost ? <LicoCostSection c={s.lico_cost} lapsCompleted={s.laps_completed} /> : null}
       <Plan s={s} />
       {s.what_if.length > 0 ? <WhatIfTable rows={s.what_if} s={s} /> : null}
       <Tyres s={s} />
@@ -249,6 +250,50 @@ function Energy({ s }: { s: StrategyUpdate }) {
     <div style={{ display: 'grid', gridTemplateColumns: s.fuel && s.ve ? '1fr 1fr' : '1fr', gap: 12 }}>
       {s.fuel ? <EnergyColumn title="Fuel" e={s.fuel} kind="fuel" cfg={s.config} lapsCompleted={s.laps_completed} refLap={s.pace.ref_lap_s} /> : null}
       {s.ve ? <EnergyColumn title="Virtual energy" e={s.ve} kind="ve" cfg={s.config} lapsCompleted={s.laps_completed} refLap={s.pace.ref_lap_s} /> : null}
+    </div>
+  )
+}
+
+/**
+ * What lift-and-coast costs: time lost only where the driver coasts more than
+ * on the normal laps, up to where the speed is back to theirs, so traffic or a
+ * mistake elsewhere on the lap does not count. Corner by corner, the cheapest
+ * place to save (seconds per litre) in green, the dearest in red.
+ */
+function LicoCostSection({ c, lapsCompleted }: { c: LicoCost; lapsCompleted: number }) {
+  const laps = c.first_lap === c.last_lap ? `lap ${c.last_lap}` : `laps ${c.first_lap}–${c.last_lap}`
+  const old = c.last_lap < lapsCompleted - 1
+  const perLitre = (k: LicoCost['corners'][number]) => (k.fuel_saved !== null && k.fuel_saved > 0.01 ? k.cost_s / k.fuel_saved : null)
+  const ratios = c.corners.map(perLitre).filter((r): r is number => r !== null)
+  const best = ratios.length > 1 ? Math.min(...ratios) : null
+  const worst = ratios.length > 1 ? Math.max(...ratios) : null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <span style={sectionTitle}>Lift and coast cost</span>
+      <span style={line} title="Time lost against the normal laps in the zones where the driver coasts more than on them, from the lift to where the speed is back to normal. Median of the last laps measured, at the lap's own pace so worn tyres do not count.">
+        <b style={{ color: colors.text }}>{c.s_per_lap.toFixed(2)} s/lap</b>
+        <span> for +{c.extra_coast_s.toFixed(1)} s coasting</span>
+        {c.fuel_saved_per_lap !== null ? <span> · saves {c.fuel_saved_per_lap.toFixed(2)} L/lap in the zones</span> : null}
+        {c.s_per_litre !== null ? <span> ({c.s_per_litre.toFixed(1)} s per litre)</span> : null}
+      </span>
+      <span style={{ ...line, fontSize: 13, color: old ? colors.accent : colors.textMuted }}>
+        {old ? 'last measured on ' : ''}{laps} · against {c.ref_laps} normal laps ({c.ref_coast_s.toFixed(1)} s coasting)
+        {c.traffic_zones > 0 ? ` · ${c.traffic_zones} zone${c.traffic_zones > 1 ? 's' : ''} left out for traffic` : ''}
+      </span>
+      {c.corners.length > 0 ? (
+        <span style={{ ...line, fontSize: 13 }} title="Per corner: where the driver lifts, seconds lost and litres saved there each lap">
+          {c.corners.map((k, i) => {
+            const r = perLitre(k)
+            const color = r === null || best === null ? colors.textMuted : r === best ? colors.success : r === worst ? colors.danger : colors.textMuted
+            return (
+              <span key={k.at_m} style={{ color, whiteSpace: 'nowrap' }}>
+                {i > 0 ? ' · ' : ''}{(k.at_m / 1000).toFixed(1)} km {k.cost_s.toFixed(2)} s
+                {k.fuel_saved !== null ? ` / ${k.fuel_saved.toFixed(2)} L` : ''}
+              </span>
+            )
+          })}
+        </span>
+      ) : null}
     </div>
   )
 }

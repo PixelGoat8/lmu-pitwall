@@ -15,7 +15,7 @@ pub const STATS_WINDOW: usize = 10;
 /// A trend needs at least this many samples to mean anything.
 const MIN_TREND_SAMPLES: usize = 4;
 /// Laps slower than this multiple of the median are not "clean".
-const CLEAN_LAP_FACTOR: f64 = 1.07;
+pub const CLEAN_LAP_FACTOR: f64 = 1.07;
 /// Rows in the "pit in N laps" table.
 const MAX_WHATIF_ROWS: usize = 8;
 /// The plan's consumption is averaged over at most this many green laps of

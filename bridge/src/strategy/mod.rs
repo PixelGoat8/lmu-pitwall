@@ -20,6 +20,7 @@
 //! under local control (`control == 0`), i.e. read on the PC that drives it.
 
 pub mod model;
+pub mod zones;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,7 @@ use crate::pit_api::{PitEstimate, PitInfo};
 use crate::protocol::messages::ServerMessage;
 use crate::recording::{field, message_type};
 use model::*;
+use zones::{LicoCost, ZoneTracker};
 
 /// How often the plan is re-sent between laps (time remaining moves on).
 const REFRESH: Duration = Duration::from_secs(2);
@@ -52,6 +54,12 @@ const COAST_MIN_SPEED_MS: f64 = 20.0;
 const COAST_PEDAL: f64 = 0.05;
 /// A lap with fewer telemetry samples than this gets no coasting figure.
 const COAST_MIN_SAMPLES: u32 = 20;
+/// Another car this close ahead on track, or this close behind, metres: time
+/// lost near it may be traffic, not lift-and-coast (see `zones`). A first
+/// guess: following close (about half a second at speed) or being passed.
+/// Wider, and in multiclass traffic most zones would be left out.
+const TRAFFIC_AHEAD_M: f64 = 40.0;
+const TRAFFIC_BEHIND_M: f64 = 20.0;
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -254,6 +262,9 @@ pub struct StrategyReport {
     pub stint: StintInfo,
     pub pit_loss: PitLossInfo,
     pub weather: WeatherOutlook,
+    /// What lift-and-coast costs, measured zone by zone (see `zones`).
+    #[serde(default)]
+    pub lico_cost: Option<LicoCost>,
     /// Why some figure is missing, in plain words.
     pub notes: Vec<String>,
     pub config: StrategyConfig,
@@ -273,6 +284,7 @@ struct Row {
     last_lap_time: f64,
     ve: f64,
     driver: String,
+    lap_start_et: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -323,6 +335,11 @@ pub struct Engine {
     lap_samples: u32,
     lap_coast_samples: u32,
     lap_watched: bool,
+
+    /// Lift-and-coast zone by zone, from the telemetry.
+    zones: ZoneTracker,
+    /// Another car close on track at the last scoring update.
+    traffic: bool,
 }
 
 /// Stops and the pit window from the limits on a stint: for each, its name,
@@ -433,6 +450,7 @@ impl Engine {
     fn on_telemetry(&mut self, msg: &Value) {
         // Pedals and speed are live for any car, even from the engineer seat.
         self.sample_coasting(msg);
+        self.sample_zones(msg);
         if !self.driving() {
             return;
         }
@@ -464,6 +482,51 @@ impl Engine {
         if speed >= COAST_MIN_SPEED_MS && throttle < COAST_PEDAL && brake < COAST_PEDAL {
             self.lap_coast_samples += 1;
         }
+    }
+
+    /// One telemetry sample towards the lift-and-coast zones (see `zones`).
+    /// Fuel only from the PC that is driving.
+    fn sample_zones(&mut self, msg: &Value) {
+        let (Some(et), Some(start), Some(speed), Some(throttle), Some(brake)) =
+            (n(msg, "current_et"), n(msg, "lap_start_et"), n(msg, "speed_ms"), n(msg, "throttle"), n(msg, "brake"))
+        else {
+            return;
+        };
+        let Some((in_pits, row_start, laps, driver)) = self.row.as_ref().map(|r| (r.in_pits, r.lap_start_et, r.total_laps, r.driver.clone()))
+        else {
+            return;
+        };
+        let fuel = if self.driving() && !b(msg, "spectated") { n(msg, "fuel").filter(|f| *f >= 0.0) } else { None };
+        let sample = zones::Sample {
+            et,
+            speed,
+            coasting: speed >= COAST_MIN_SPEED_MS && throttle < COAST_PEDAL && brake < COAST_PEDAL,
+            excluded: in_pits || self.game_phase == 6,
+            traffic: self.traffic,
+            fuel,
+            // The ground plane: y is up in the game's world.
+            pos: field(msg, "position").and_then(|p| Some((n(p, "x")?, n(p, "z")?))),
+        };
+        // The lap that closes when this sample starts a new one: scoring may
+        // not have counted it yet.
+        let closed = if row_start >= start - 0.5 { laps } else { laps + 1 };
+        self.zones.on_sample(start, sample, self.track_length, closed, &driver);
+    }
+
+    /// Another car close on track, ahead or behind.
+    fn close_car(&self, vehicles: &[Value], pid: i64, me: &Row) -> bool {
+        let len = self.track_length;
+        if len <= 0.0 || me.in_pits {
+            return false;
+        }
+        vehicles.iter().any(|v| {
+            field(v, "id").and_then(|i| i.as_i64()) != Some(pid)
+                && !b(v, "in_pits")
+                && n(v, "lap_dist").is_some_and(|d| {
+                    let ahead = (d - me.lap_dist).rem_euclid(len);
+                    ahead < TRAFFIC_AHEAD_M || len - ahead < TRAFFIC_BEHIND_M
+                })
+        })
     }
 
     fn on_session_info(&mut self, msg: &Value) {
@@ -504,10 +567,8 @@ impl Engine {
         self.session_time = t;
 
         let Some(pid) = field(msg, "player_vehicle_id").and_then(|v| v.as_i64()) else { return (false, false) };
-        let Some(r) = field(msg, "vehicles")
-            .and_then(|v| v.as_array())
-            .and_then(|vs| vs.iter().find(|v| field(v, "id").and_then(|i| i.as_i64()) == Some(pid)))
-        else {
+        let Some(vehicles) = field(msg, "vehicles").and_then(|v| v.as_array()) else { return (false, false) };
+        let Some(r) = vehicles.iter().find(|v| field(v, "id").and_then(|i| i.as_i64()) == Some(pid)) else {
             return (false, false);
         };
         let row = Row {
@@ -519,7 +580,9 @@ impl Engine {
             last_lap_time: n(r, "last_lap_time").unwrap_or(-1.0),
             ve: n(r, "virtual_energy").unwrap_or(0.0),
             driver: s(r, "driver_name"),
+            lap_start_et: n(r, "lap_start_et").unwrap_or(0.0),
         };
+        self.traffic = self.close_car(vehicles, pid, &row);
         let prev = self.row.replace(row.clone());
         let lap_in_progress = row.total_laps + 1;
         let mut new_loss = false;
@@ -821,6 +884,7 @@ impl Engine {
                 game_estimate: self.pit_info.as_ref().and_then(|p| p.estimate.clone()),
             },
             weather: weather_outlook(&self.forecast, self.session_length_s, self.session_time, self.raining, self.wetness, ref_lap),
+            lico_cost: self.zones.summary(),
             notes,
             config: self.cfg.clone(),
         }
@@ -980,6 +1044,94 @@ mod tests {
         assert!(r.fuel.is_none());
         assert!(e.laps.iter().all(|l| l.fuel.is_none() && l.wear.is_none()));
         assert!(r.notes.iter().any(|n| n.contains("only read on the PC that is driving")));
+    }
+
+    /// Not a test: what the lift-and-coast measure finds in a recording, to
+    /// check it on real sessions (`--record`). From `bridge`:
+    ///
+    /// `$env:PWREC = "race.pwrec"; cargo test lico_cost_of_a_recording -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn lico_cost_of_a_recording() {
+        let Ok(path) = std::env::var("PWREC") else {
+            eprintln!("Set PWREC to a .pwrec file.");
+            return;
+        };
+        let rec = crate::recording::Recording::load(Path::new(&path)).expect("a readable recording");
+        let mut e = Engine::new(StrategyConfig::default(), PitLossStore::default());
+        let mut last = None;
+        for f in &rec.frames {
+            if e.on_message(&f.msg).0 {
+                // A lap was completed: keep the latest figure, the session
+                // may end with laps that do not measure.
+                if let Some(c) = e.report().lico_cost {
+                    eprintln!(
+                        "lap {:>3}: {:.2} s/lap for +{:.1} s coasting, laps {}-{}, {} in traffic",
+                        e.laps.last().map(|l| l.lap).unwrap_or(0),
+                        c.s_per_lap,
+                        c.extra_coast_s,
+                        c.first_lap,
+                        c.last_lap,
+                        c.traffic_zones
+                    );
+                    last = Some(c);
+                }
+            }
+        }
+        eprintln!("{last:#?}");
+    }
+
+    /// Laps of 5000 m at 50 m/s, telemetry at 20 Hz. From the fourth lap the
+    /// driver coasts from 1000 to 1200 m and is at 42 m/s until 1300 m; on the
+    /// fifth another car runs 30 m ahead all lap.
+    #[test]
+    fn lift_and_coast_cost_comes_from_the_telemetry() {
+        let mut e = Engine::new(StrategyConfig::default(), PitLossStore::default());
+        e.on_message(&session_info());
+        let (mut t, mut fuel, dt) = (0.0, 90.0, 0.05);
+        for lap in 0..7i64 {
+            let (lico, traffic, start) = (lap >= 3, lap == 4, t);
+            let (mut s, mut step) = (0.0, 0);
+            while s < 5000.0 {
+                let coast = lico && (1000.0..1200.0).contains(&s);
+                let speed = if lico && (1000.0..1300.0).contains(&s) { 42.0 } else { 50.0 };
+                if step % 4 == 0 {
+                    let other = s + if traffic { 30.0 } else { 2500.0 };
+                    e.on_message(&v(serde_json::json!({
+                        "type": "ScoringUpdate", "session_type": "Race", "session_time": t, "player_vehicle_id": 3,
+                        "vehicles": [
+                            {"id": 3, "total_laps": lap, "lap_dist": s, "in_pits": false, "pit_state": 0, "control": 0,
+                             "last_lap_time": if lap > 0 { 100.0 } else { -1.0 }, "virtual_energy": 0.0,
+                             "driver_name": "Alice", "lap_start_et": start},
+                            {"id": 4, "lap_dist": other % 5000.0, "in_pits": false}]
+                    })));
+                }
+                e.on_message(&v(serde_json::json!({
+                    "type": "TelemetryUpdate", "current_et": t, "lap_start_et": start, "speed_ms": speed,
+                    "throttle": if coast { 0.0 } else { 1.0 }, "brake": 0.0, "fuel": fuel, "fuel_capacity": 100.0
+                })));
+                if !coast {
+                    fuel -= 0.001 * speed * dt; // 1 L/km at throttle
+                }
+                s += speed * dt;
+                t += dt;
+                step += 1;
+            }
+        }
+        // The first sample of the next lap closes the last one.
+        e.on_message(&v(serde_json::json!({
+            "type": "TelemetryUpdate", "current_et": t, "lap_start_et": t, "speed_ms": 50.0,
+            "throttle": 1.0, "brake": 0.0, "fuel": fuel, "fuel_capacity": 100.0
+        })));
+        let c = e.report().lico_cost.expect("a cost from the zones");
+        // Lap 5 had its only zone in traffic: left out, and counted.
+        assert_eq!((c.laps, c.first_lap, c.last_lap, c.traffic_zones), (3, 4, 7, 1));
+        assert_eq!(c.ref_laps, 3);
+        let expected = 300.0 / 42.0 - 300.0 / 50.0;
+        assert!((c.s_per_lap - expected).abs() < 0.03, "{} vs {}", c.s_per_lap, expected);
+        assert!((c.fuel_saved_per_lap.unwrap() - 0.2).abs() < 0.01, "{:?}", c.fuel_saved_per_lap);
+        assert_eq!(c.corners.len(), 1);
+        assert!((c.corners[0].at_m - 1000.0).abs() <= 10.0);
     }
 
     /// Five laps, then a stop whose lane loss works out at 30 s. Returns
