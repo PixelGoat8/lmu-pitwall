@@ -68,25 +68,32 @@ def main():
                     "two recordings with the same --seed and different --car give two teams in one race, for a hub")
     ap.add_argument("--fcy", default="", help='full course yellow as "start-end" in session seconds, e.g. "120-170"')
     ap.add_argument("--penalty-at", type=float, default=-1.0, help="session time the team car gets a penalty (-1 = never)")
-    ap.add_argument("--lico", default="", help='lift-and-coast of the team car as "from_lap:seconds:saving", comma-separated, '
-                    'e.g. "6:3:0.08,10:5:0.13" = from lap 6 coast 3 s a lap for 8 %% less fuel and VE, from lap 10 5 s for 13 %%')
+    ap.add_argument("--lico", default="", help='lift-and-coast of the team car as "from_lap:seconds:saving[:cost]", comma-separated, '
+                    'e.g. "6:3:0.08,10:5:0.13:1.5" = from lap 6 coast 3 s a lap for 8 %% less fuel and VE, from lap 10 5 s for 13 %% '
+                    'losing 1.5 s a lap; the time is lost from the lift to the end of braking. Cost default: 0.2 s per second of coasting')
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
     team = parse_team(args.team, args.duration)
     me = args.me or team[0][2]
-    track_len = 5800.0
+    # About 50 m/s on average for a Hypercar, so the team car's speed, which
+    # moves it along the lap, reads like a real one.
+    track_len = round(50.0 * args.lap_time)
     # The team car: the third Hypercar, or the second GT3.
     player_id = 2 if args.team_class == "Hyper" else (args.cars + 1) // 2 + 1
     if 0 <= args.car < args.cars:
         player_id = args.car
     fcy = tuple(float(x) for x in args.fcy.split("-")) if args.fcy else None
-    lico = sorted(tuple(float(x) for x in part.split(":")) for part in args.lico.split(",")) if args.lico else []
+    lico = []
+    for part in args.lico.split(",") if args.lico else []:
+        x = [float(v) for v in part.split(":")]
+        lico.append((x[0], x[1], x[2], x[3] if len(x) > 3 else 0.2 * x[1]))
+    lico.sort()
 
     def lico_at(lap):
-        """(seconds coasting, saving) on lap number `lap` of the team car."""
-        active = [(s, k) for frm, s, k in lico if lap >= frm]
-        return active[-1] if active else (0.0, 0.0)
+        """(seconds coasting, saving, seconds lost) on lap number `lap` of the team car."""
+        active = [(s, k, c) for frm, s, k, c in lico if lap >= frm]
+        return active[-1] if active else (0.0, 0.0, 0.0)
 
     cars = []
     for i in range(args.cars):
@@ -116,6 +123,81 @@ def main():
                 return name
         return team[-1][2]
 
+    # --- the team car along the lap ----------------------------------------
+    # Four corners a lap. shape(f) is the speed at lap fraction f, relative;
+    # in each corner the car brakes from THETA_BRAKE to THETA_APEX (angles in
+    # the corner's own cycle). Lift-and-coast starts `lead` before the braking
+    # and slows the car from there to the end of the braking, by up to a
+    # fraction `d` at the braking point: it costs time there and nowhere else,
+    # as on track. Times below are in laps of the normal profile.
+    N_PROFILE = 2000
+    THETA_BRAKE = math.acos(-0.6)
+    THETA_APEX = 2 * math.pi - THETA_BRAKE
+
+    def shape(f):
+        return 1 + 0.6 * math.sin(2 * math.pi * f * 4)
+
+    def corner_theta(f):
+        return (2 * math.pi * f * 4) % (2 * math.pi)
+
+    def braking_at(f):
+        return THETA_BRAKE <= corner_theta(f) < THETA_APEX
+
+    def coasting_at(f, lead):
+        return lead > 0 and THETA_BRAKE - lead <= corner_theta(f) < THETA_BRAKE
+
+    def bump(f, lead):
+        """How much of the slow-down applies at f: 0 to 1 over the coasting, back to 0 over the braking."""
+        th = corner_theta(f)
+        if lead <= 0:
+            return 0.0
+        if THETA_BRAKE - lead <= th < THETA_BRAKE:
+            return (th - (THETA_BRAKE - lead)) / lead
+        if THETA_BRAKE <= th < THETA_APEX:
+            return (THETA_APEX - th) / (THETA_APEX - THETA_BRAKE)
+        return 0.0
+
+    H = sum(1 / shape((k + 0.5) / N_PROFILE) for k in range(N_PROFILE)) / N_PROFILE
+
+    def integrals(lead, d):
+        """(lap time, time coasting, time at throttle), in normal laps."""
+        tot = coast = thr = 0.0
+        for k in range(N_PROFILE):
+            f = (k + 0.5) / N_PROFILE
+            dt_rel = 1 / (shape(f) * (1 - d * bump(f, lead))) / N_PROFILE / H
+            tot += dt_rel
+            if coasting_at(f, lead):
+                coast += dt_rel
+            elif not braking_at(f):
+                thr += dt_rel
+        return tot, coast, thr
+
+    profiles = {}
+
+    def team_profile(coast_s, cost_s):
+        """(lead, d, lap time in normal laps, share of it at throttle) for this lift-and-coast."""
+        key = (coast_s, cost_s)
+        if key not in profiles:
+            lap = cars[player_id]["lap"]
+            lead = d = 0.0
+            if coast_s > 0:
+                lo, hi = 0.0, THETA_BRAKE
+                for _ in range(30):
+                    lead = (lo + hi) / 2
+                    lo, hi = (lead, hi) if integrals(lead, 0.0)[1] * lap < coast_s else (lo, lead)
+                lo, hi = 0.0, 0.9
+                for _ in range(30):
+                    d = (lo + hi) / 2
+                    lo, hi = (d, hi) if (integrals(lead, d)[0] - 1) * lap < cost_s else (lo, d)
+            tot, _, thr = integrals(lead, d)
+            profiles[key] = (lead, d, tot, thr / tot)
+        return profiles[key]
+
+    def team_speed_factor(f, prof):
+        """Laps per second at f, times the normal lap time (a normal lap takes exactly that)."""
+        lead, d = prof[0], prof[1]
+        return shape(f) * (1 - d * bump(f, lead)) * H
+
     # --- team car state that evolves over the race -------------------------
     fuel_cap, fuel = 90.0, 90.0
     fuel_per_lap = 2.9
@@ -126,6 +208,8 @@ def main():
     # game), not in one step at the line.
     lap_fuel_use = fuel_per_lap
     lap_ve_use = VE_PER_LAP
+    # Share of this lap's consumption spent so far: only at throttle.
+    lap_burned = 0.0
     stint, stint_laps, stint_start_fuel = 1, 0, fuel
     progress = [c["start"] for c in cars]  # laps, integrated over time
     lock = dict(count=0, total=0.0, longest=0.0)
@@ -158,16 +242,25 @@ def main():
         for c in cars:
             i = c["id"]
             in_pit = t < pit_until[i]
+            before = progress[i]
             if not in_pit:
                 lap_len = c["lap"] * (1 + TYRE_DEG * tyre_age if i == player_id else 1)
-                progress[i] += dt / lap_len
+                if i == player_id:
+                    prof = team_profile(*lico_at(laps_done[i] + 1)[::2])
+                    progress[i] += dt * team_speed_factor(progress[i] % 1.0, prof) / lap_len
+                else:
+                    progress[i] += dt / lap_len
             total = progress[i]
             laps = int(math.floor(total)) if total >= 0 else 0
             if laps > laps_done[i]:
-                lt = t - lap_start[i]
+                # The state sent at t is the one after this step's motion, so
+                # the line was crossed between t - dt and t: when exactly, as
+                # the game's lap start time has it.
+                crossed = t - dt + dt * (laps - before) / (total - before) if total > before else t
+                lt = crossed - lap_start[i]
                 last_lap[i] = lt
                 best_lap[i] = lt if best_lap[i] < 0 else min(best_lap[i], lt)
-                lap_start[i] = t
+                lap_start[i] = crossed
                 laps_done[i] = laps
                 if i == player_id:
                     used = lap_fuel_use
@@ -175,6 +268,7 @@ def main():
                     ve = max(0.0, ve - lap_ve_use)
                     recent_fuel.append(used)
                     saving = lico_at(laps + 1)[1]
+                    lap_burned = 0.0
                     lap_fuel_use = fuel_per_lap * (1 + rng.uniform(-0.03, 0.03)) * (1 - saving)
                     lap_ve_use = VE_PER_LAP * (1 + rng.uniform(-0.03, 0.03)) * (1 - saving)
                     stint_laps += 1
@@ -192,10 +286,8 @@ def main():
                         lock = dict(count=0, total=0.0, longest=0.0)
             prog.append((total, c))
 
-        team_total = prog[player_id][0]
-        team_frac = (team_total - math.floor(team_total)) if team_total >= 0 else 0.0
-        fuel_live = max(0.0, fuel - lap_fuel_use * team_frac)
-        ve_live = max(0.0, ve - lap_ve_use * team_frac)
+        fuel_live = max(0.0, fuel - lap_fuel_use * lap_burned)
+        ve_live = max(0.0, ve - lap_ve_use * lap_burned)
 
         order = sorted(prog, key=lambda x: -x[0])
         leader_total = order[0][0]
@@ -257,14 +349,16 @@ def main():
         total = prog[player_id][0]
         frac = total - math.floor(total) if total >= 0 else 0.0
         in_pit = t < pit_until[player_id]
-        speed = 0.0 if in_pit else 45 + 35 * math.sin(2 * math.pi * frac * 4)
-        def braking_at(f):
-            return math.cos(2 * math.pi * f * 4) < -0.6
+        # The speed is what moves the car along the lap (see team_profile), so
+        # distance integrated from it matches the track.
+        prof = team_profile(*lico_at(laps_done[player_id] + 1)[::2])
+        team_lap_len = cars[player_id]["lap"] * (1 + TYRE_DEG * tyre_age)
+        speed = 0.0 if in_pit else track_len * team_speed_factor(frac, prof) / team_lap_len
         braking = (not in_pit) and braking_at(frac)
-        # Lift-and-coast: off the throttle for a share of the seconds before
-        # each of the four braking zones.
-        coast_s = lico_at(laps_done[player_id] + 1)[0]
-        coasting = (not in_pit) and not braking and coast_s > 0 and braking_at(frac + coast_s / 4 / cars[player_id]["lap"])
+        # Lift-and-coast: off the throttle before each of the four braking zones.
+        coasting = (not in_pit) and coasting_at(frac, prof[0])
+        if not (in_pit or braking or coasting):
+            lap_burned = min(1.0, lap_burned + dt / (prof[3] * prof[2] * team_lap_len))
         tires = []
         for w in range(4):
             base = 92 + 6 * math.sin(t / 7 + w) + (10 if w < 2 else 0)
