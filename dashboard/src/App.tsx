@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useWebSocket } from './hooks/useWebSocket'
-import { colors } from './styles/theme'
+import { colors, fonts } from './styles/theme'
 import Toolbar from './components/Toolbar'
 import WidgetGrid from './components/WidgetGrid'
 import Settings from './components/Settings'
@@ -9,6 +9,7 @@ import FuelCalculator from './components/FuelCalculator'
 import HistoryPanel from './components/HistoryPanel'
 import { useSettingsStore } from './stores/settingsStore'
 import { useTeamStore } from './stores/teamStore'
+import { useTelemetryStore } from './stores/telemetryStore'
 
 export default function App() {
   useWebSocket()
@@ -84,6 +85,34 @@ export default function App() {
           : <WidgetGrid key={team} />
       }
       <Settings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <RefusalNotice />
     </div>
   )
 }
+
+/**
+ * Why the bridge did not do what was just asked (a guest changing the
+ * strategy, an engineer changing the hub's AI settings), for a few seconds.
+ */
+function RefusalNotice() {
+  const refusal = useTelemetryStore((s) => s.refusal)
+  // The refusal whose time is up, by when it arrived.
+  const [expired, setExpired] = useState<number | null>(null)
+  useEffect(() => {
+    if (!refusal) return
+    const t = setTimeout(() => setExpired(refusal.at), REFUSAL_MS)
+    return () => clearTimeout(t)
+  }, [refusal])
+  if (!refusal || expired === refusal.at) return null
+  return (
+    <div role="status" style={{
+      position: 'fixed', left: '50%', bottom: 24, transform: 'translateX(-50%)', maxWidth: 'calc(100vw - 32px)',
+      background: colors.bgWidget, border: `1px solid ${colors.accent}`, color: colors.text, borderRadius: 4,
+      padding: '8px 14px', fontFamily: fonts.body, fontSize: 15, zIndex: 1000, boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+    }}>
+      {refusal.message}
+    </div>
+  )
+}
+
+const REFUSAL_MS = 6000

@@ -134,6 +134,8 @@ interface TelemetryStore {
   connection: ConnectionSection
   versionInfo: VersionInfoSection
   hub: HubSection
+  /** The latest refused command, shown for a few seconds. */
+  refusal: { message: string; at: number } | null
   // Latest plan from the bridge's strategy engine; null outside a session.
   strategy: StrategyUpdate | null
   // Race event log and recent laps of every car, from the bridge.
@@ -312,6 +314,7 @@ function freshData(): CarData {
     vehicleStatus: defaultVehicleStatus,
     allDrivers: defaultAllDrivers,
     hub: { status: null, stints: [], error: null },
+    refusal: null,
     strategy: null,
     raceTiming: null,
     aiFeed: null,
@@ -598,6 +601,10 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
 
       case 'HubError':
         set((state) => ({ hub: { ...state.hub, error: msg.message } }))
+        break
+
+      case 'Refused':
+        set({ refusal: { message: msg.message, at: Date.now() } })
         break
 
       case 'VersionInfo':

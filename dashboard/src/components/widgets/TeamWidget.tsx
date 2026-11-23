@@ -5,6 +5,7 @@ import { colors, fonts } from '../../styles/theme'
 import { fmtLap } from '../../utils/lapFormat'
 import { useTeamStore } from '../../stores/teamStore'
 import { useIsLocal } from '../../hooks/useIsLocal'
+import { useAccess } from '../../hooks/useAccess'
 import type { HubSourceStatus, HubStintInfo, TeamInfo } from '../../types/telemetry'
 
 // Colours offered for a team: distinct from each other and from the class
@@ -59,6 +60,8 @@ export default function TeamWidget() {
   // Teams and drivers are managed on the hub's PC only (the hub refuses it
   // from elsewhere), so the controls appear only there.
   const local = useIsLocal()
+  // Pinning a driver is the engineers'; a guest only watches.
+  const { canChange } = useAccess()
 
   if (!status) {
     return (
@@ -99,7 +102,7 @@ export default function TeamWidget() {
       {/* Follow mode */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={sectionTitle}>Following</span>
-        <button onClick={() => follow(null)} style={pill(status.follow === null)} title="Switch automatically to whoever is driving">
+        <button onClick={() => follow(null)} disabled={!canChange} style={pill(status.follow === null)} title="Switch automatically to whoever is driving">
           Auto: the driver
         </button>
         {status.follow !== null ? (
@@ -135,9 +138,11 @@ export default function TeamWidget() {
                   <span style={{ color: colors.textMuted }}> · {s.host}</span>
                 </span>
               </div>
-              <button onClick={() => follow(isPinned ? null : s.id)} style={pill(isPinned)} title={isPinned ? 'Back to following the driver' : 'Stay on this PC whoever drives'}>
-                {isPinned ? 'Pinned' : 'Pin'}
-              </button>
+              {canChange ? (
+                <button onClick={() => follow(isPinned ? null : s.id)} style={pill(isPinned)} title={isPinned ? 'Back to following the driver' : 'Stay on this PC whoever drives'}>
+                  {isPinned ? 'Pinned' : 'Pin'}
+                </button>
+              ) : isPinned ? <span style={{ fontFamily: fonts.body, fontSize: 12, color: colors.accent }}>pinned</span> : null}
               {local && teams.length > 1 && current ? (
                 <select
                   value={current}

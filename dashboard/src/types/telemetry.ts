@@ -355,6 +355,12 @@ export interface HubError {
   message: string
 }
 
+/** A command this page's access may not send, or access just taken away. */
+export interface Refused {
+  type: 'Refused'
+  message: string
+}
+
 import type { PitInfoMsg, StrategyUpdate } from './strategy'
 import type { RaceTiming } from './race'
 import type { AiFeed } from './ai'
@@ -380,6 +386,7 @@ export type ServerMessage =
   | HubStatus
   | HubStints
   | HubError
+  | Refused
   | TeamsMsg
   | StrategyUpdate
   | PitInfoMsg

@@ -3,6 +3,7 @@ import { useTelemetryStore } from '../../stores/telemetryStore'
 import { sendBridgeCommand } from '../../hooks/useWebSocket'
 import { colors, fonts } from '../../styles/theme'
 import type { AiComment, AiConfig } from '../../types/ai'
+import { useAccess } from '../../hooks/useAccess'
 
 const TRIGGER: Record<string, string> = {
   lap: 'lap', question: 'question', fcy: 'full course yellow', fcy_end: 'green again', pit_out: 'after the stop',
@@ -18,6 +19,8 @@ export default function AiWidget() {
   const feed = useTelemetryStore((s) => s.aiFeed)
   const [question, setQuestion] = useState('')
   const [settings, setSettings] = useState(false)
+  // Guests only read; on a hub the settings and budget are its own PC's.
+  const access = useAccess()
 
   if (!feed) {
     return <div style={{ ...frame, justifyContent: 'center', alignItems: 'center', color: colors.textMuted, fontFamily: fonts.body, fontSize: 15 }}>AI engineer — no connection to the bridge</div>
@@ -34,19 +37,19 @@ export default function AiWidget() {
   return (
     <div style={frame}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <button onClick={toggle} disabled={!st.key_present} style={pill(st.enabled)}>{st.enabled ? 'AI on' : 'AI off'}</button>
+        <button onClick={toggle} disabled={!st.key_present || !access.canAiSettings} style={pill(st.enabled)} title={access.canAiSettings ? undefined : 'Turned on and off on the hub PC'}>{st.enabled ? 'AI on' : 'AI off'}</button>
         <span style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.textMuted }}>
           today ${st.cost_today_usd.toFixed(3)}{cfg ? ` / $${cfg.daily_budget_usd.toFixed(2)}` : ''} · {st.calls_today} comments
           {st.busy ? ' · thinking…' : ''}
         </span>
         <span style={{ flex: 1 }} />
-        <button onClick={() => setSettings((o) => !o)} style={pill(settings)}>⚙</button>
+        {access.canAiSettings ? <button onClick={() => setSettings((o) => !o)} style={pill(settings)}>⚙</button> : null}
       </div>
       {st.blocked ? <Note color={colors.accent}>{st.blocked}</Note> : null}
       {st.last_error ? <Note color={colors.danger}>{st.last_error}</Note> : null}
-      {settings && cfg ? <Settings cfg={cfg} /> : null}
+      {settings && cfg && access.canAiSettings ? <Settings cfg={cfg} /> : null}
 
-      <div style={{ display: 'flex', gap: 6 }}>
+      {access.canChange ? <div style={{ display: 'flex', gap: 6 }}>
         <input
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
@@ -56,7 +59,7 @@ export default function AiWidget() {
           style={{ ...input, flex: 1, minWidth: 0 }}
         />
         <button onClick={ask} disabled={!st.enabled} style={{ ...pill(true), opacity: st.enabled ? 1 : 0.4 }}>Ask</button>
-      </div>
+      </div> : null}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6, overflow: 'auto', minHeight: 0 }}>
         {comments.length === 0 ? (

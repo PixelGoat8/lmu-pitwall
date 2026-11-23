@@ -63,10 +63,40 @@ Al secondo ingegnere bastano Tailscale e un browser: non installa niente.
    Aggiungendo `&team=clienti` in fondo, il link apre direttamente quella
    squadra.
 
-Chi apre il link vede e cambia tutto ciò che riguarda la gara (strategia,
-target, AI) per entrambe le squadre, ma **non** può gestire squadre e piloti.
-Lo stesso link va bene per un pilota che vuole guardare. Accessi separati per
-persona arriveranno con [#4](https://github.com/PixelGoat8/lmu-pitwall/issues/4).
+Chi apre questo link è un **ingegnere**: guida la gara (strategia, target,
+Pin, domande all'AI) per entrambe le squadre, ma **non** gestisce squadre e
+piloti e non cambia le impostazioni dell'AI. Quelle restano sul PC dell'hub.
+
+### Un link per persona
+
+Meglio dare a ognuno **il suo link**: si sa chi è collegato e si può togliere
+l'accesso a una persona sola. Finché non c'è il pannello Accessi
+([#4](https://github.com/PixelGoat8/lmu-pitwall/issues/4)), le persone si
+aggiungono a mano in `%APPDATA%\LMUPitwall\users.json` sul PC dell'hub:
+
+```json
+{"users": [
+  {"name": "Marco", "role": "engineer"},
+  {"name": "Gianni", "role": "guest", "teams": ["clienti"]}
+]}
+```
+
+Salva il file: entro pochi secondi l'hub aggiunge a ognuno un `token`. Il
+link della persona è quello dell'hub con il suo token al posto di quello
+dell'hub: `http://<indirizzo-dell-hub>:9100/?token=<token della persona>`.
+
+| | Ospite (`guest`) | Ingegnere (`engineer`) | PC dell'hub |
+|---|---|---|---|
+| Guardare | solo le squadre in `teams` | tutte | tutte |
+| Strategia e target, Pin, domande all'AI | | ✓ | ✓ |
+| Impostazioni e budget dell'AI | | | ✓ |
+| Squadre, piloti, persone | | | ✓ |
+| Cancellare storico e tracciati | | | ✓ |
+
+Per togliere l'accesso a qualcuno, cancellalo dal file: viene scollegato
+entro pochi secondi e il suo link smette di funzionare. Un ruolo scritto male
+vale come ospite. Il link dell'hub (🔗) resta valido come accesso da
+ingegnere.
 
 ## Emergenza: senza i Pitwall dei piloti
 

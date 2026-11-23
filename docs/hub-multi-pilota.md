@@ -49,6 +49,15 @@ perdita in pit lane e budget AI restano in comune.
 - Un `hub.json` di una versione precedente diventa da solo la prima squadra,
   *Squadra*, con le impostazioni di strategia e AI di prima.
 
+## Accessi
+
+Chi si collega da un altro PC o da un tablet ha un ruolo: **ingegnere** (con
+il link 🔗 dell'hub o un link personale) oppure **ospite** (solo guardare, e
+solo le sue squadre). Il PC dell'hub è l'amministratore. Le persone con un
+link personale sono in `%APPDATA%\LMUPitwall\users.json`. I permessi li
+controlla l'hub, non la dashboard: un comando non permesso viene rifiutato con
+un messaggio. Come aggiungere una persona: [guida per l'ingegnere](guida-ingegnere.md#un-link-per-persona).
+
 ## Il pannello Team
 
 | Cosa vedi | Significato |
