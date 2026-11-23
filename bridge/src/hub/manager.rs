@@ -68,6 +68,7 @@ fn team_list(store: &TeamsStore, running: &HashMap<String, Running>) -> Vec<Team
                 driving: s.driving,
                 car_name: s.car_name,
                 driver: s.driver,
+                watchable: true,
             }
         })
         .collect()

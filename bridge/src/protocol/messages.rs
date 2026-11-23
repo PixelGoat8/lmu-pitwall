@@ -527,6 +527,15 @@ pub struct TeamInfo {
     /// is in it; empty until a bridge in a session is followed.
     pub car_name: String,
     pub driver: String,
+    /// This client may watch the team. A guest also gets the teams it may
+    /// not watch, reduced to name, colour and car, so the sister car is still
+    /// marked; the switcher leaves them out.
+    #[serde(default = "watchable_default")]
+    pub watchable: bool,
+}
+
+fn watchable_default() -> bool {
+    true
 }
 
 /// One bridge as a hub sees it.

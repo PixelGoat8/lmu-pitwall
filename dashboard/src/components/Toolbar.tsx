@@ -236,10 +236,12 @@ function FollowPicker() {
  * Switching keeps the page and the layout; only the car on screen changes.
  */
 function TeamSwitcher() {
-  const teams = useTeamStore((s) => s.teams)
+  const all = useTeamStore((s) => s.teams)
   const current = useTeamStore((s) => s.current)
   const asked = useTeamStore((s) => s.team)
   const setTeam = useTeamStore((s) => s.setTeam)
+  // A guest also hears of teams it may not watch (for the sister-car marks).
+  const teams = all.filter((t) => t.watchable !== false)
   if (teams.length < 2) return null
   const on = current ?? asked
   return (

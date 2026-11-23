@@ -341,6 +341,8 @@ export interface TeamInfo {
   driving: boolean           // that PC is driving the car
   car_name: string           // empty until a PC in a session is followed
   driver: string
+  /** False for a team a guest may not watch: there only to mark its car. */
+  watchable?: boolean
 }
 
 /** The hub's teams, every second. `current` is the one this page watches. */

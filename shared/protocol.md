@@ -31,9 +31,11 @@ token it presents:
 - A refused command gets an error back in its family (`HistoryError`,
   `HubError`, `PostRaceError`), otherwise **`Refused`** `{message}`. A guest's
   `track_outline_save` is dropped silently (the dashboard sends it on its own).
-- A guest sees only the teams listed in their entry: `?team=` falls back to
-  the first of those, and `Teams` lists only them. With none, the client gets
-  `Refused` and is closed.
+- A guest watches only the teams listed in their entry: `?team=` falls back
+  to the first of those. In `Teams` the other teams keep only `id`, `name`,
+  `color` and `car_name` (for the sister-car marks) and have
+  `watchable: false`; the switcher leaves them out. With no team at all, the
+  client gets `Refused` and is closed.
 - Access is checked again at every heartbeat: a person removed from
   `users.json`, or a team no longer shared with them, gets `Refused` and is
   closed.

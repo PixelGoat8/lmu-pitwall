@@ -87,7 +87,7 @@ dell'hub: `http://<indirizzo-dell-hub>:9100/?token=<token della persona>`.
 
 | | Ospite (`guest`) | Ingegnere (`engineer`) | PC dell'hub |
 |---|---|---|---|
-| Guardare | solo le squadre in `teams` | tutte | tutte |
+| Guardare | solo le squadre in `teams` (l'auto delle altre resta evidenziata) | tutte | tutte |
 | Strategia e target, Pin, domande all'AI | | ✓ | ✓ |
 | Impostazioni e budget dell'AI | | | ✓ |
 | Squadre, piloti, persone | | | ✓ |

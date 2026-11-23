@@ -18,7 +18,7 @@ use crate::access::{self, Access, Caller, Role};
 use crate::fuel_calculator::api::handle_command as fuel_handle;
 use crate::hub::HubCommand;
 use crate::post_race::api::handle_command as post_race_handle;
-use crate::protocol::messages::{ClientCommand, ServerMessage};
+use crate::protocol::messages::{ClientCommand, ServerMessage, TeamInfo};
 use crate::team::TeamLink;
 
 /// How often each client gets a `Heartbeat` message and a WebSocket ping.
@@ -579,15 +579,33 @@ fn command_name(text: &str) -> String {
         .unwrap_or_else(|| "command".into())
 }
 
-/// What a client of a team receives of `msg`: a guest's team list holds only
-/// the teams shared with them.
+/// What a client of a team receives of `msg`. In a guest's team list the
+/// teams not shared with them keep only what marks their car as a sister car
+/// (name, colour, the car's name, which the standings show anyway): not who
+/// drives it, nor which PCs follow it, and they cannot be switched to.
 fn visible_to(caller: &Caller, msg: Arc<ServerMessage>) -> Arc<ServerMessage> {
     if caller.teams.is_none() {
         return msg;
     }
     match &*msg {
         ServerMessage::Teams { teams, current } => Arc::new(ServerMessage::Teams {
-            teams: teams.iter().filter(|t| caller.sees_team(&t.id)).cloned().collect(),
+            teams: teams
+                .iter()
+                .map(|t| {
+                    if caller.sees_team(&t.id) {
+                        t.clone()
+                    } else {
+                        TeamInfo {
+                            id: t.id.clone(),
+                            name: t.name.clone(),
+                            color: t.color.clone(),
+                            car_name: t.car_name.clone(),
+                            watchable: false,
+                            ..Default::default()
+                        }
+                    }
+                })
+                .collect(),
             current: current.clone(),
         }),
         _ => msg,
@@ -677,8 +695,6 @@ fn serialize(msg: &ServerMessage, fmt: Format) -> Result<Message> {
 mod tests {
     use super::*;
 
-    use crate::protocol::messages::TeamInfo;
-
     fn need(cmd: ClientCommand) -> (Role, Role) {
         (required_role(&cmd, false), required_role(&cmd, true))
     }
@@ -746,13 +762,29 @@ mod tests {
 
     #[test]
     fn a_guest_sees_only_their_teams_in_the_list() {
-        let team = |id: &str| TeamInfo { id: id.into(), name: id.into(), ..Default::default() };
+        let team = |id: &str| TeamInfo {
+            id: id.into(),
+            name: id.into(),
+            color: "#3987e5".into(),
+            sources: 2,
+            active: Some("Alice PC".into()),
+            driving: true,
+            car_name: format!("Iron Lynx {id}"),
+            driver: "Alice".into(),
+            watchable: true,
+        };
         let msg = Arc::new(ServerMessage::Teams { teams: vec![team("ufficiale"), team("clienti")], current: "clienti".into() });
         let guest = Caller { role: Role::Guest, name: "G".into(), user_id: Some("g".into()), teams: Some(vec!["clienti".into()]) };
         match &*visible_to(&guest, msg.clone()) {
             ServerMessage::Teams { teams, current } => {
-                assert_eq!(teams.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["clienti"]);
                 assert_eq!(current, "clienti");
+                assert_eq!(teams[1], team("clienti"), "their own team in full");
+                // The other team: enough to mark the sister car, nothing more.
+                let other = &teams[0];
+                assert_eq!((other.id.as_str(), other.name.as_str(), other.color.as_str()), ("ufficiale", "ufficiale", "#3987e5"));
+                assert_eq!(other.car_name, "Iron Lynx ufficiale");
+                assert!(!other.watchable);
+                assert_eq!((other.sources, other.active.clone(), other.driving, other.driver.as_str()), (0, None, false, ""));
             }
             other => panic!("{other:?}"),
         }
