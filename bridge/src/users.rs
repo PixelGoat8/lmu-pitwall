@@ -13,15 +13,16 @@
 //! hub's PC (see `crate::access`). The hub's own token, from `config.json`,
 //! stays valid as an engineer's link.
 //!
-//! Until the hub has a panel for this, people are added by editing the file:
-//! `{"name": "Marco", "role": "engineer"}` is enough. The hub fills in the id
-//! and a token, writes them back, and picks up the change without a restart.
-//! Removing a person from the file disconnects them within seconds.
+//! People are managed in the hub's Access panel, on the hub's PC. The file can
+//! also be edited by hand: `{"name": "Marco", "role": "engineer"}` is enough.
+//! The hub fills in the id and a token, writes them back, and picks up the
+//! change without a restart. Removing a person disconnects them.
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -106,6 +107,32 @@ fn normalize(file: &mut UsersFile) -> bool {
         u.teams.dedup();
     }
     *file != before
+}
+
+fn clean_name(name: &str) -> Result<String> {
+    let n: String = name.trim().chars().take(MAX_NAME_CHARS).collect();
+    if n.is_empty() {
+        return Err(anyhow!("a person needs a name"));
+    }
+    Ok(n)
+}
+
+/// Two people with the same name could not be told apart in the logs.
+fn check_unique(file: &UsersFile, name: &str, except: Option<&str>) -> Result<()> {
+    let taken = file.users.iter().any(|u| Some(u.id.as_str()) != except && u.name.to_lowercase() == name.to_lowercase());
+    if taken {
+        return Err(anyhow!("there is already someone called {name}"));
+    }
+    Ok(())
+}
+
+fn unused_id(file: &UsersFile) -> String {
+    loop {
+        let id = access::generate_token()[..8].to_string();
+        if !file.users.iter().any(|u| u.id == id) {
+            return id;
+        }
+    }
 }
 
 fn mtime(path: &Path) -> Option<SystemTime> {
@@ -196,17 +223,88 @@ impl UsersStore {
         self.current().file.users.iter().find(|u| u.id == id).cloned()
     }
 
-    /// A team was deleted: no guest keeps it in their list.
-    pub fn forget_team(&self, team_id: &str) {
+    /// Everyone, in the order they were added.
+    pub fn list(&self) -> Vec<User> {
+        self.current().file.users.clone()
+    }
+
+    /// Apply a change to the list and save it, or change nothing.
+    fn change<R>(&self, f: impl FnOnce(&mut UsersFile) -> Result<R>) -> Result<R> {
         let mut st = self.current();
         let mut file = st.file.clone();
-        for u in &mut file.users {
-            u.teams.retain(|t| t != team_id);
-        }
+        let r = f(&mut file)?;
+        normalize(&mut file);
         if file != st.file {
             self.write(&mut st, &file);
             st.file = file;
         }
+        Ok(r)
+    }
+
+    /// A team was deleted: no guest keeps it in their list.
+    pub fn forget_team(&self, team_id: &str) {
+        let _ = self.change(|file| {
+            for u in &mut file.users {
+                u.teams.retain(|t| t != team_id);
+            }
+            Ok(())
+        });
+    }
+
+    /// Add a person, with a fresh personal link.
+    pub fn create(&self, name: &str, role: Role, teams: Vec<String>) -> Result<User> {
+        let name = clean_name(name)?;
+        self.change(|file| {
+            check_unique(file, &name, None)?;
+            let user = User {
+                id: unused_id(file),
+                name,
+                role: role.min(Role::Engineer),
+                teams,
+                token: access::generate_token(),
+                created: now(),
+            };
+            file.users.push(user.clone());
+            Ok(user)
+        })
+    }
+
+    /// Change a person's name, role or teams; what is `None` stays.
+    pub fn update(&self, id: &str, name: Option<&str>, role: Option<Role>, teams: Option<Vec<String>>) -> Result<User> {
+        let name = name.map(clean_name).transpose()?;
+        self.change(|file| {
+            if let Some(n) = &name {
+                check_unique(file, n, Some(id))?;
+            }
+            let u = file.users.iter_mut().find(|u| u.id == id).ok_or_else(|| anyhow!("no such person"))?;
+            if let Some(n) = name {
+                u.name = n;
+            }
+            if let Some(r) = role {
+                u.role = r.min(Role::Engineer);
+            }
+            if let Some(t) = teams {
+                u.teams = t;
+            }
+            Ok(u.clone())
+        })
+    }
+
+    /// A new link for a person: the old one stops working.
+    pub fn regenerate(&self, id: &str) -> Result<User> {
+        self.change(|file| {
+            let u = file.users.iter_mut().find(|u| u.id == id).ok_or_else(|| anyhow!("no such person"))?;
+            u.token = access::generate_token();
+            Ok(u.clone())
+        })
+    }
+
+    /// Take a person's access away.
+    pub fn remove(&self, id: &str) -> Result<User> {
+        self.change(|file| {
+            let i = file.users.iter().position(|u| u.id == id).ok_or_else(|| anyhow!("no such person"))?;
+            Ok(file.users.remove(i))
+        })
     }
 
     #[cfg(test)]
@@ -303,6 +401,38 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(1100));
         write_file(dir.path(), r#"{"users":[{"name":"Marco""#);
         assert_eq!(store.snapshot().users.len(), 1);
+    }
+
+    #[test]
+    fn people_are_added_changed_given_a_new_link_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = UsersStore::open(dir.path());
+        let marco = store.create(" Marco ", Role::Engineer, vec![]).unwrap();
+        assert_eq!((marco.name.as_str(), marco.role, marco.token.len()), ("Marco", Role::Engineer, 32));
+        // Nobody becomes an admin through the panel.
+        let gianni = store.create("Gianni", Role::Admin, vec!["clienti".into()]).unwrap();
+        assert_eq!(gianni.role, Role::Engineer);
+        assert!(store.create("marco", Role::Guest, vec![]).is_err(), "names are unique");
+        assert!(store.create("  ", Role::Guest, vec![]).is_err());
+
+        let gianni = store.update(&gianni.id, None, Some(Role::Guest), Some(vec!["ufficiale".into()])).unwrap();
+        assert_eq!((gianni.role, gianni.teams.clone()), (Role::Guest, vec!["ufficiale".to_string()]));
+        assert!(store.update(&gianni.id, Some("Marco"), None, None).is_err());
+        assert_eq!(store.update(&gianni.id, Some("Gianni B"), None, None).unwrap().name, "Gianni B");
+
+        let new = store.regenerate(&marco.id).unwrap();
+        assert_ne!(new.token, marco.token);
+        assert!(store.by_token(&marco.token).is_none(), "the old link is dead");
+        assert!(store.by_token(&new.token).is_some());
+
+        store.remove(&marco.id).unwrap();
+        assert!(store.get(&marco.id).is_none());
+        assert!(store.remove(&marco.id).is_err());
+
+        // Saved: a restarted hub knows the same people.
+        let again = UsersStore::open(dir.path());
+        assert_eq!(again.list(), store.list());
+        assert_eq!(again.list().len(), 1);
     }
 
     #[test]

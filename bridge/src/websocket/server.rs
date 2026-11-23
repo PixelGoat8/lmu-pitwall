@@ -18,7 +18,7 @@ use crate::access::{self, Access, Caller, Role};
 use crate::fuel_calculator::api::handle_command as fuel_handle;
 use crate::hub::HubCommand;
 use crate::post_race::api::handle_command as post_race_handle;
-use crate::protocol::messages::{ClientCommand, ServerMessage, TeamInfo};
+use crate::protocol::messages::{ClientCommand, OnlineInfo, PersonInfo, ServerMessage, TeamInfo};
 use crate::team::TeamLink;
 
 /// How often each client gets a `Heartbeat` message and a WebSocket ping.
@@ -259,6 +259,9 @@ async fn handle_client(
         "Client {} connected ({}, {}, format: {:?}, team: {}, {} total)",
         peer, caller.name, caller.role.as_str(), fmt, team.id, count
     );
+    // On the Access panel's list while connected.
+    let presence = access.join(&caller, &team.id, peer.ip());
+    let mut people_changes = access.changes();
 
     // The latest snapshots first, so the dashboard does not wait for the next
     // one: every car (until the next car crosses the line), the version check,
@@ -298,16 +301,12 @@ async fn handle_client(
                 }
                 // Access taken away, or this team no longer shared with them:
                 // say so and close.
-                match access.recheck(&caller) {
-                    Some(now) if now.sees_team(&team.id) => caller = now,
-                    now => {
-                        info!("Client {} ({}): access to team {} removed, closing", peer, caller.name, team.id);
-                        let message = if now.is_some() { NO_TEAM } else { ACCESS_REMOVED };
-                        if let Ok(ws_msg) = serialize(&ServerMessage::Refused { message: message.into() }, fmt) {
-                            let _ = sink.send(ws_msg).await;
-                        }
-                        break;
+                if let Err(message) = check_again(&access, &mut caller, &team.id, &presence) {
+                    info!("Client {} ({}): access to team {} removed, closing", peer, caller.name, team.id);
+                    if let Ok(ws_msg) = serialize(&ServerMessage::Refused { message: message.into() }, fmt) {
+                        let _ = sink.send(ws_msg).await;
                     }
+                    break;
                 }
                 let server_time_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -320,6 +319,18 @@ async fn handle_client(
                 };
                 if sent.is_err() || sink.send(Message::Ping(Vec::new().into())).await.is_err() {
                     debug!("Heartbeat to {} failed", peer);
+                    break;
+                }
+            }
+
+            // People changed in the Access panel: check now, not at the next
+            // heartbeat, so a removed person is cut off at once.
+            Ok(()) = people_changes.changed() => {
+                if let Err(message) = check_again(&access, &mut caller, &team.id, &presence) {
+                    info!("Client {} ({}): access to team {} removed, closing", peer, caller.name, team.id);
+                    if let Ok(ws_msg) = serialize(&ServerMessage::Refused { message: message.into() }, fmt) {
+                        let _ = sink.send(ws_msg).await;
+                    }
                     break;
                 }
             }
@@ -389,8 +400,21 @@ async fn handle_client(
                                     }
                                     continue;
                                 }
-                                if changes_the_race(&cmd) {
+                                if changes_the_race(&cmd) || is_access_command(&cmd) {
                                     info!("{} by {} ({})", command_name(&text), caller.name, peer);
+                                }
+
+                                // The hub's people: answered to this client only.
+                                if is_access_command(&cmd) {
+                                    let team_ids: Vec<String> =
+                                        teams.read().map(|t| t.iter().map(|x| x.id.clone()).collect()).unwrap_or_default();
+                                    let reply = access_command(&cmd, &access, &team_ids);
+                                    if let Ok(ws_msg) = serialize(&reply, fmt) {
+                                        if sink.send(ws_msg).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    continue;
                                 }
 
                                 if let ClientCommand::FollowCar { car_name } = cmd {
@@ -506,6 +530,7 @@ async fn handle_client(
     // can tell "the bridge said goodbye" from "the link broke". Bounded: a
     // peer that is already gone must not hold this task open.
     let _ = tokio::time::timeout(Duration::from_secs(1), sink.close()).await;
+    drop(presence);
 
     let prev = client_count.fetch_sub(1, Ordering::Relaxed);
     let new_count = prev.saturating_sub(1);
@@ -546,6 +571,8 @@ fn required_role(cmd: &ClientCommand, hub: bool) -> Role {
         ClientCommand::HistoryDelete { .. } => Role::Admin,
         ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => Role::Admin,
         cmd if is_team_command(cmd) => Role::Admin,
+        // The list carries everyone's personal link.
+        cmd if is_access_command(cmd) => Role::Admin,
         // The AI key and its spending belong to the hub's PC.
         ClientCommand::AiConfig { .. } if hub => Role::Admin,
         ClientCommand::TrackOutlineDelete { .. } if hub => Role::Admin,
@@ -558,6 +585,118 @@ fn required_role(cmd: &ClientCommand, hub: bool) -> Role {
         | ClientCommand::TrackOutlineDelete { .. } => Role::Engineer,
         _ => Role::Guest,
     }
+}
+
+/// Check a connected caller against the people as they are now, keeping its
+/// name and role current. `Err` is why it must be closed.
+fn check_again(access: &Access, caller: &mut Caller, team: &str, presence: &access::Presence) -> Result<(), &'static str> {
+    match access.recheck(caller) {
+        Some(now) if now.sees_team(team) => {
+            if now != *caller {
+                presence.update(&now);
+                *caller = now;
+            }
+            Ok(())
+        }
+        Some(_) => Err(NO_TEAM),
+        None => Err(ACCESS_REMOVED),
+    }
+}
+
+fn is_access_command(cmd: &ClientCommand) -> bool {
+    matches!(
+        cmd,
+        ClientCommand::AccessList
+            | ClientCommand::AccessAdd { .. }
+            | ClientCommand::AccessUpdate { .. }
+            | ClientCommand::AccessRegenerate { .. }
+            | ClientCommand::AccessRemove { .. }
+    )
+}
+
+fn parse_role(role: &str) -> Result<Role, String> {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "engineer" => Ok(Role::Engineer),
+        "guest" => Ok(Role::Guest),
+        other => Err(format!("unknown role \"{other}\": engineer or guest")),
+    }
+}
+
+/// Teams a guest is given: only ones that exist, each once.
+fn known_teams(teams: &[String], existing: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for t in teams {
+        if existing.contains(t) && !out.contains(t) {
+            out.push(t.clone());
+        }
+    }
+    out
+}
+
+/// Carry out an Access panel command and answer with the list as it is now.
+fn access_command(cmd: &ClientCommand, access: &Access, existing: &[String]) -> ServerMessage {
+    let Some(users) = access.users() else {
+        return ServerMessage::AccessError { message: "This Pitwall is not running as a hub (start it with --hub).".into() };
+    };
+    let result: Result<(), String> = match cmd {
+        ClientCommand::AccessList => Ok(()),
+        ClientCommand::AccessAdd { name, role, teams } => parse_role(role)
+            .and_then(|r| users.create(name, r, known_teams(teams, existing)).map_err(|e| e.to_string()))
+            .map(|u| info!("Access: {} added as {}", u.name, u.role.as_str())),
+        ClientCommand::AccessUpdate { id, name, role, teams } => role
+            .as_deref()
+            .map(parse_role)
+            .transpose()
+            .and_then(|r| {
+                users
+                    .update(id, name.as_deref(), r, teams.as_ref().map(|t| known_teams(t, existing)))
+                    .map_err(|e| e.to_string())
+            })
+            .map(|_| access.people_changed()),
+        ClientCommand::AccessRegenerate { id } => users.regenerate(id).map_err(|e| e.to_string()).map(|u| {
+            info!("Access: new link for {}", u.name);
+            access.people_changed();
+        }),
+        ClientCommand::AccessRemove { id } => users.remove(id).map_err(|e| e.to_string()).map(|u| {
+            info!("Access: {} removed", u.name);
+            access.people_changed();
+        }),
+        _ => Ok(()),
+    };
+    if let Err(e) = result {
+        return ServerMessage::AccessError { message: format!("{e}.") };
+    }
+    access_list(access)
+}
+
+fn access_list(access: &Access) -> ServerMessage {
+    let people = access
+        .users()
+        .map(|u| u.list())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|u| PersonInfo {
+            id: u.id,
+            name: u.name,
+            role: u.role.as_str().into(),
+            teams: u.teams,
+            token: u.token,
+            created: u.created,
+        })
+        .collect();
+    let online = access
+        .online()
+        .into_iter()
+        .map(|o| OnlineInfo {
+            name: o.name,
+            role: o.role.as_str().into(),
+            user_id: o.user_id,
+            team: o.team,
+            address: o.address,
+            connected_s: o.since.elapsed().as_secs(),
+        })
+        .collect();
+    ServerMessage::AccessList { people, online }
 }
 
 /// Commands worth a line in the log, with who sent them.
@@ -646,6 +785,7 @@ fn refusal(cmd: &ClientCommand, needed: Role, hub: bool) -> ServerMessage {
         }
         cmd if is_team_command(cmd) => ServerMessage::HubError { message },
         ClientCommand::PostRaceInit { .. } => ServerMessage::PostRaceError { message },
+        cmd if is_access_command(cmd) => ServerMessage::AccessError { message },
         _ => ServerMessage::Refused { message },
     }
 }
@@ -761,6 +901,56 @@ mod tests {
     }
 
     #[test]
+    fn people_are_managed_only_from_the_hubs_pc() {
+        for cmd in [
+            ClientCommand::AccessList,
+            ClientCommand::AccessAdd { name: "M".into(), role: "engineer".into(), teams: vec![] },
+            ClientCommand::AccessRemove { id: "x".into() },
+        ] {
+            assert_eq!(need(cmd.clone()), (Role::Admin, Role::Admin), "{cmd:?}");
+            assert!(matches!(refusal(&cmd, Role::Admin, true), ServerMessage::AccessError { .. }));
+        }
+    }
+
+    #[test]
+    fn the_access_panel_adds_changes_and_removes_people() {
+        let dir = tempfile::tempdir().unwrap();
+        let users = Arc::new(crate::users::UsersStore::open(dir.path()));
+        let access = Access::new("hubtoken".into(), Some(users.clone()));
+        let existing = vec!["ufficiale".to_string(), "clienti".to_string()];
+        let people = |m: ServerMessage| match m {
+            ServerMessage::AccessList { people, .. } => people,
+            other => panic!("{other:?}"),
+        };
+
+        let add = ClientCommand::AccessAdd { name: "Gianni".into(), role: "guest".into(), teams: vec!["clienti".into(), "nope".into(), "clienti".into()] };
+        let list = people(access_command(&add, &access, &existing));
+        assert_eq!(list.len(), 1);
+        assert_eq!((list[0].role.as_str(), list[0].teams.clone()), ("guest", vec!["clienti".to_string()]));
+
+        let bad = ClientCommand::AccessAdd { name: "X".into(), role: "admin".into(), teams: vec![] };
+        assert!(matches!(access_command(&bad, &access, &existing), ServerMessage::AccessError { .. }));
+        assert!(matches!(access_command(&add, &access, &existing), ServerMessage::AccessError { .. }), "same name twice");
+
+        let id = list[0].id.clone();
+        let mut changes = access.changes();
+        let up = ClientCommand::AccessUpdate { id: id.clone(), name: None, role: Some("engineer".into()), teams: None };
+        assert_eq!(people(access_command(&up, &access, &existing))[0].role, "engineer");
+        assert!(changes.has_changed().unwrap(), "connections check themselves again");
+        changes.mark_unchanged();
+
+        let old = list[0].token.clone();
+        let new = people(access_command(&ClientCommand::AccessRegenerate { id: id.clone() }, &access, &existing));
+        assert_ne!(new[0].token, old);
+        assert!(changes.has_changed().unwrap());
+
+        assert!(people(access_command(&ClientCommand::AccessRemove { id }, &access, &existing)).is_empty());
+        // A driver's bridge has no people.
+        let bridge = Access::new("t".into(), None);
+        assert!(matches!(access_command(&ClientCommand::AccessList, &bridge, &existing), ServerMessage::AccessError { .. }));
+    }
+
+    #[test]
     fn a_guest_sees_only_their_teams_in_the_list() {
         let team = |id: &str| TeamInfo {
             id: id.into(),
@@ -774,7 +964,7 @@ mod tests {
             watchable: true,
         };
         let msg = Arc::new(ServerMessage::Teams { teams: vec![team("ufficiale"), team("clienti")], current: "clienti".into() });
-        let guest = Caller { role: Role::Guest, name: "G".into(), user_id: Some("g".into()), teams: Some(vec!["clienti".into()]) };
+        let guest = Caller { role: Role::Guest, name: "G".into(), user_id: Some("g".into()), teams: Some(vec!["clienti".into()]), key: None };
         match &*visible_to(&guest, msg.clone()) {
             ServerMessage::Teams { teams, current } => {
                 assert_eq!(current, "clienti");
@@ -788,7 +978,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        let engineer = Caller { role: Role::Engineer, name: "E".into(), user_id: None, teams: None };
+        let engineer = Caller { role: Role::Engineer, name: "E".into(), user_id: None, teams: None, key: None };
         assert!(Arc::ptr_eq(&visible_to(&engineer, msg.clone()), &msg));
     }
 }

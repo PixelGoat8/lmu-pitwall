@@ -495,6 +495,17 @@ pub enum ServerMessage {
         message: String,
     },
 
+    /// A hub's people and who is connected now, for the Access panel (the
+    /// hub's own PC only: it carries the personal tokens).
+    AccessList {
+        people: Vec<PersonInfo>,
+        online: Vec<OnlineInfo>,
+    },
+
+    AccessError {
+        message: String,
+    },
+
     /// A hub's teams, every second, on every team's stream. `current` is the
     /// team this client is watching.
     Teams {
@@ -509,6 +520,37 @@ pub enum ServerMessage {
     /// bridge version that knows message types this one does not.
     #[serde(untagged)]
     Raw(rmpv::Value),
+}
+
+/// A person with a personal link to a hub.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonInfo {
+    pub id: String,
+    pub name: String,
+    /// "engineer" or "guest".
+    pub role: String,
+    /// Teams a guest may watch.
+    pub teams: Vec<String>,
+    /// For the link the admin copies.
+    pub token: String,
+    /// When the person was added (Unix seconds).
+    pub created: u64,
+}
+
+/// A dashboard connected right now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineInfo {
+    /// A person's name, "hub link" or "hub PC".
+    pub name: String,
+    pub role: String,
+    /// The person in users.json; `None` for the hub link and the hub PC.
+    pub user_id: Option<String>,
+    /// The team the dashboard is watching.
+    pub team: String,
+    /// IP address it connects from.
+    pub address: String,
+    /// Seconds since it connected.
+    pub connected_s: u64,
 }
 
 /// One team of a hub, as the team switcher and the sister-car marks need it.
@@ -844,6 +886,31 @@ pub enum ClientCommand {
     },
     /// Only a team without drivers, and never the last one.
     TeamDelete { id: String },
+
+    // -----------------------------------------------------------------------
+    // People of a hub (its own PC only); each answered with AccessList
+    // -----------------------------------------------------------------------
+    AccessList,
+    /// `role`: "engineer" or "guest"; `teams`: what a guest may watch.
+    AccessAdd {
+        name: String,
+        role: String,
+        #[serde(default)]
+        teams: Vec<String>,
+    },
+    AccessUpdate {
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        role: Option<String>,
+        #[serde(default)]
+        teams: Option<Vec<String>>,
+    },
+    /// A new link for the person: the old one stops working at once.
+    AccessRegenerate { id: String },
+    /// Take the person's access away, disconnecting them at once.
+    AccessRemove { id: String },
 
     // -----------------------------------------------------------------------
     // Fuel Calculator commands

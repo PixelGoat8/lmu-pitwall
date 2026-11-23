@@ -26,10 +26,14 @@
 //! look local. Do not put one in front of the bridge; connect to the port
 //! directly.
 
+use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use serde::Serialize;
+use tokio::sync::watch;
 
 use crate::users::{User, UsersStore};
 
@@ -75,6 +79,9 @@ pub struct Caller {
     pub user_id: Option<String>,
     /// Teams this caller may watch; `None` = all of them.
     pub teams: Option<Vec<String>>,
+    /// Fingerprint of the personal token used, so a link replaced by a new
+    /// one stops working for those already connected with it.
+    pub(crate) key: Option<String>,
 }
 
 impl Caller {
@@ -93,6 +100,49 @@ impl Caller {
             name: u.name.clone(),
             user_id: Some(u.id.clone()),
             teams: (u.role == Role::Guest).then(|| u.teams.clone()),
+            key: Some(fingerprint(&u.token)),
+        }
+    }
+}
+
+fn fingerprint(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+/// A dashboard connected right now, for the Access panel.
+#[derive(Debug, Clone)]
+pub struct Online {
+    pub name: String,
+    pub role: Role,
+    pub user_id: Option<String>,
+    pub team: String,
+    pub address: String,
+    pub since: Instant,
+}
+
+/// Who is connected, while they are: dropping it takes them off the list.
+pub struct Presence {
+    access: Arc<Access>,
+    id: u64,
+}
+
+impl Presence {
+    /// The caller's name or role changed (an edit in the panel).
+    pub fn update(&self, caller: &Caller) {
+        if let Ok(mut online) = self.access.online.lock() {
+            if let Some(o) = online.get_mut(&self.id) {
+                o.name = caller.name.clone();
+                o.role = caller.role;
+            }
+        }
+    }
+}
+
+impl Drop for Presence {
+    fn drop(&mut self) {
+        if let Ok(mut online) = self.access.online.lock() {
+            online.remove(&self.id);
         }
     }
 }
@@ -103,11 +153,56 @@ pub struct Access {
     token: String,
     /// The hub's people; `None` on a driver's bridge.
     users: Option<Arc<UsersStore>>,
+    online: Mutex<HashMap<u64, Online>>,
+    next_id: AtomicU64,
+    /// Bumped when people change: every connection checks itself again at
+    /// once instead of at its next heartbeat.
+    changed: watch::Sender<u64>,
 }
 
 impl Access {
     pub fn new(token: String, users: Option<Arc<UsersStore>>) -> Self {
-        Access { token, users }
+        Access { token, users, online: Mutex::new(HashMap::new()), next_id: AtomicU64::new(1), changed: watch::channel(0).0 }
+    }
+
+    pub fn users(&self) -> Option<&Arc<UsersStore>> {
+        self.users.as_ref()
+    }
+
+    /// Notified when people change (see [`Access::people_changed`]).
+    pub fn changes(&self) -> watch::Receiver<u64> {
+        self.changed.subscribe()
+    }
+
+    /// Someone was removed or given a new link: let every connection check
+    /// itself again now.
+    pub fn people_changed(&self) {
+        self.changed.send_modify(|n| *n += 1);
+    }
+
+    /// Put a connection on the list of who is connected, until the returned
+    /// guard is dropped.
+    pub fn join(self: &Arc<Self>, caller: &Caller, team: &str, address: IpAddr) -> Presence {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let entry = Online {
+            name: caller.name.clone(),
+            role: caller.role,
+            user_id: caller.user_id.clone(),
+            team: team.to_string(),
+            address: address.to_string(),
+            since: Instant::now(),
+        };
+        if let Ok(mut online) = self.online.lock() {
+            online.insert(id, entry);
+        }
+        Presence { access: self.clone(), id }
+    }
+
+    /// Who is connected now, longest first.
+    pub fn online(&self) -> Vec<Online> {
+        let mut list: Vec<Online> = self.online.lock().map(|o| o.values().cloned().collect()).unwrap_or_default();
+        list.sort_by_key(|o| o.since);
+        list
     }
 
     pub fn token(&self) -> &str {
@@ -128,6 +223,7 @@ impl Access {
                 name: if self.is_hub() { "hub PC".into() } else { "this PC".into() },
                 user_id: None,
                 teams: None,
+                key: None,
             });
         }
         let presented = presented?;
@@ -137,16 +233,18 @@ impl Access {
                 name: if self.is_hub() { "hub link".into() } else { "shared link".into() },
                 user_id: None,
                 teams: None,
+                key: None,
             });
         }
         self.users.as_ref()?.by_token(presented).map(|u| Caller::from_user(&u))
     }
 
     /// The caller as `users.json` says now: `None` once their access has been
-    /// taken away. The PC and the shared token do not change.
+    /// taken away or their link replaced. The PC and the shared token do not
+    /// change.
     pub fn recheck(&self, caller: &Caller) -> Option<Caller> {
         match (&caller.user_id, &self.users) {
-            (Some(id), Some(users)) => users.get(id).map(|u| Caller::from_user(&u)),
+            (Some(id), Some(users)) => users.get(id).map(|u| Caller::from_user(&u)).filter(|now| now.key == caller.key),
             (Some(_), None) => None,
             (None, _) => Some(caller.clone()),
         }
@@ -312,10 +410,41 @@ mod tests {
     }
 
     #[test]
+    fn a_new_link_cuts_off_the_old_one() {
+        let (_dir, users, a) = hub_with(r#"{"users":[{"id":"m","name":"Marco","role":"engineer","token":"marco-token-0123456789"}]}"#);
+        let marco = a.authorize(ip("10.0.0.2"), Some("marco-token-0123456789")).unwrap();
+        // A rename keeps the connection, under the new name.
+        users.update("m", Some("Marco R"), None, None).unwrap();
+        assert_eq!(a.recheck(&marco).map(|c| c.name), Some("Marco R".into()));
+        let fresh = users.regenerate("m").unwrap();
+        assert_eq!(a.recheck(&marco), None);
+        assert!(a.authorize(ip("10.0.0.2"), Some(&fresh.token)).is_some());
+    }
+
+    #[tokio::test]
+    async fn who_is_connected_and_until_when() {
+        let a = Arc::new(Access::new("secret".into(), None));
+        let c = a.authorize(ip("10.0.0.2"), Some("secret")).unwrap();
+        let mut changes = a.changes();
+        let first = a.join(&c, "ufficiale", ip("10.0.0.2"));
+        let second = a.join(&c, "clienti", ip("10.0.0.3"));
+        let online = a.online();
+        assert_eq!(online.iter().map(|o| o.team.as_str()).collect::<Vec<_>>(), vec!["ufficiale", "clienti"]);
+        assert_eq!(online[0].address, "10.0.0.2");
+        drop(first);
+        assert_eq!(a.online().len(), 1);
+        drop(second);
+        assert!(a.online().is_empty());
+
+        a.people_changed();
+        assert!(changes.has_changed().unwrap());
+    }
+
+    #[test]
     fn a_bridge_knows_no_people() {
         let a = Access::new("secret".into(), None);
         assert!(!a.is_hub());
-        let ghost = Caller { role: Role::Engineer, name: "x".into(), user_id: Some("m".into()), teams: None };
+        let ghost = Caller { role: Role::Engineer, name: "x".into(), user_id: Some("m".into()), teams: None, key: None };
         assert_eq!(a.recheck(&ghost), None);
     }
 

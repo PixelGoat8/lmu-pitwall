@@ -23,6 +23,7 @@ token it presents:
 | `strategy_config`, `ai_ask`, `hub_follow`, `follow_car`, `track_outline_save` | | ✓ | ✓ |
 | `ai_config`, `track_outline_delete` | | bridge only | ✓ |
 | `hub_add_source`, `hub_remove_source`, `hub_move_source`, `team_*` | | | ✓ |
+| `access_*` (people of a hub) | | | ✓ |
 | `history_delete`, `post_race_init` with a custom `results_path` | | | ✓ |
 
 - WebSocket: `ws://HOST:9000/?token=TOKEN`. Without a valid token the
@@ -36,9 +37,16 @@ token it presents:
   `color` and `car_name` (for the sister-car marks) and have
   `watchable: false`; the switcher leaves them out. With no team at all, the
   client gets `Refused` and is closed.
-- Access is checked again at every heartbeat: a person removed from
-  `users.json`, or a team no longer shared with them, gets `Refused` and is
-  closed.
+- Access is checked again at every heartbeat, and at once when the Access
+  panel changes people: a person removed, given a new link, or no longer
+  sharing the team gets `Refused` and is closed.
+- People of a hub (admin only), each answered with **`AccessList`**
+  `{people[] {id, name, role, teams, token, created}, online[] {name, role,
+  user_id, team, address, connected_s}}` or **`AccessError`** `{message}`:
+  `access_list`, `access_add {name, role, teams}`,
+  `access_update {id, name?, role?, teams?}`, `access_regenerate {id}`,
+  `access_remove {id}`. `role` is `engineer` or `guest`; unknown teams are
+  dropped.
 - The token is generated on first run and stored in
   `%APPDATA%\LMUPitwall\config.json`; `--token` and `LMU_PITWALL_TOKEN` override it.
 
