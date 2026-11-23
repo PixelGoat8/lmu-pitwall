@@ -7,6 +7,7 @@ import Settings from './components/Settings'
 import PostRaceResults from './components/PostRaceResults'
 import FuelCalculator from './components/FuelCalculator'
 import HistoryPanel from './components/HistoryPanel'
+import AccessPanel from './components/AccessPanel'
 import { useSettingsStore } from './stores/settingsStore'
 import { useTeamStore } from './stores/teamStore'
 import { useTelemetryStore } from './stores/telemetryStore'
@@ -17,6 +18,7 @@ export default function App() {
   const [resultsOpen, setResultsOpen] = useState(false)
   const [fuelOpen, setFuelOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [accessOpen, setAccessOpen] = useState(false)
   const updateSettings = useSettingsStore((s) => s.update)
   // A new team means a new car: widgets start over instead of carrying what
   // they remembered about the previous one.
@@ -69,14 +71,18 @@ export default function App() {
     }}>
       <Toolbar
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenResults={() => { setFuelOpen(false); setHistoryOpen(false); setResultsOpen(v => !v) }}
-        onOpenFuel={() => { setResultsOpen(false); setHistoryOpen(false); setFuelOpen(v => !v) }}
-        onOpenHistory={() => { setResultsOpen(false); setFuelOpen(false); setHistoryOpen(v => !v) }}
+        onOpenResults={() => { setFuelOpen(false); setHistoryOpen(false); setAccessOpen(false); setResultsOpen(v => !v) }}
+        onOpenFuel={() => { setResultsOpen(false); setHistoryOpen(false); setAccessOpen(false); setFuelOpen(v => !v) }}
+        onOpenHistory={() => { setResultsOpen(false); setFuelOpen(false); setAccessOpen(false); setHistoryOpen(v => !v) }}
+        onOpenAccess={() => { setResultsOpen(false); setFuelOpen(false); setHistoryOpen(false); setAccessOpen(v => !v) }}
+        accessOpen={accessOpen}
         historyOpen={historyOpen}
         resultsOpen={resultsOpen}
         fuelOpen={fuelOpen}
       />
-      {historyOpen
+      {accessOpen
+        ? <AccessPanel onClose={() => setAccessOpen(false)} />
+        : historyOpen
         ? <HistoryPanel key={team} onClose={() => setHistoryOpen(false)} />
         : resultsOpen
         ? <PostRaceResults onClose={() => setResultsOpen(false)} />

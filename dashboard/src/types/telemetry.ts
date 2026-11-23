@@ -357,6 +357,37 @@ export interface HubError {
   message: string
 }
 
+/** A person with a personal link to a hub (Access panel, hub PC only). */
+export interface PersonInfo {
+  id: string
+  name: string
+  role: 'engineer' | 'guest'
+  teams: string[]          // what a guest may watch
+  token: string
+  created: number          // Unix seconds
+}
+
+/** A dashboard connected to the hub right now. */
+export interface OnlineInfo {
+  name: string             // a person, "hub link" or "hub PC"
+  role: 'admin' | 'engineer' | 'guest'
+  user_id: string | null
+  team: string
+  address: string
+  connected_s: number
+}
+
+export interface AccessListMsg {
+  type: 'AccessList'
+  people: PersonInfo[]
+  online: OnlineInfo[]
+}
+
+export interface AccessErrorMsg {
+  type: 'AccessError'
+  message: string
+}
+
 /** A command this page's access may not send, or access just taken away. */
 export interface Refused {
   type: 'Refused'
@@ -389,6 +420,8 @@ export type ServerMessage =
   | HubStints
   | HubError
   | Refused
+  | AccessListMsg
+  | AccessErrorMsg
   | TeamsMsg
   | StrategyUpdate
   | PitInfoMsg

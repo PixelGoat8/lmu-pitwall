@@ -70,20 +70,16 @@ piloti e non cambia le impostazioni dell'AI. Quelle restano sul PC dell'hub.
 ### Un link per persona
 
 Meglio dare a ognuno **il suo link**: si sa chi è collegato e si può togliere
-l'accesso a una persona sola. Finché non c'è il pannello Accessi
-([#4](https://github.com/PixelGoat8/lmu-pitwall/issues/4)), le persone si
-aggiungono a mano in `%APPDATA%\LMUPitwall\users.json` sul PC dell'hub:
+l'accesso a una persona sola. Sul PC dell'hub premi **👥** (*Access*):
 
-```json
-{"users": [
-  {"name": "Marco", "role": "engineer"},
-  {"name": "Gianni", "role": "guest", "teams": ["clienti"]}
-]}
-```
+1. Scrivi il nome, scegli **Engineer** o **Guest** (per un ospite spunta le
+   squadre che può guardare) e premi **Add**.
+2. Sotto il suo nome c'è il suo link: **Copy** e mandaglielo.
 
-Salva il file: entro pochi secondi l'hub aggiunge a ognuno un `token`. Il
-link della persona è quello dell'hub con il suo token al posto di quello
-dell'hub: `http://<indirizzo-dell-hub>:9100/?token=<token della persona>`.
+Dallo stesso pannello cambi ruolo e squadre, dai un link nuovo (**New link**:
+quello vecchio smette subito di funzionare) o togli l'accesso (**Remove**: la
+persona viene scollegata subito). In fondo, **Connected now** dice chi è
+collegato, su quale squadra, da dove e da quanto.
 
 | | Ospite (`guest`) | Ingegnere (`engineer`) | PC dell'hub |
 |---|---|---|---|
@@ -93,10 +89,10 @@ dell'hub: `http://<indirizzo-dell-hub>:9100/?token=<token della persona>`.
 | Squadre, piloti, persone | | | ✓ |
 | Cancellare storico e tracciati | | | ✓ |
 
-Per togliere l'accesso a qualcuno, cancellalo dal file: viene scollegato
-entro pochi secondi e il suo link smette di funzionare. Un ruolo scritto male
-vale come ospite. Il link dell'hub (🔗) resta valido come accesso da
-ingegnere.
+Il link dell'hub (🔗) resta valido come accesso da ingegnere. Le persone sono
+salvate in `%APPDATA%\LMUPitwall\users.json`; il file si può anche modificare
+a mano (`{"name": "Marco", "role": "engineer"}` basta: l'hub aggiunge il
+token da solo), e un ruolo scritto male vale come ospite.
 
 ## Emergenza: senza i Pitwall dei piloti
 

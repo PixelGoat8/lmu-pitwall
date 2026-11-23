@@ -53,8 +53,9 @@ perdita in pit lane e budget AI restano in comune.
 
 Chi si collega da un altro PC o da un tablet ha un ruolo: **ingegnere** (con
 il link 🔗 dell'hub o un link personale) oppure **ospite** (solo guardare, e
-solo le sue squadre). Il PC dell'hub è l'amministratore. Le persone con un
-link personale sono in `%APPDATA%\LMUPitwall\users.json`. I permessi li
+solo le sue squadre). Il PC dell'hub è l'amministratore: lì il pannello **👥**
+aggiunge persone, dà e rigenera i link, toglie l'accesso e mostra chi è
+collegato. Le persone sono in `%APPDATA%\LMUPitwall\users.json`. I permessi li
 controlla l'hub, non la dashboard: un comando non permesso viene rifiutato con
 un messaggio. Come aggiungere una persona: [guida per l'ingegnere](guida-ingegnere.md#un-link-per-persona).
 
