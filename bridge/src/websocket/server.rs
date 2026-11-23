@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex, RwLock,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -14,7 +14,7 @@ use tokio_tungstenite::tungstenite::http::StatusCode;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
 
-use crate::access::{self, Access, Level};
+use crate::access::{self, Access, Caller, Role};
 use crate::fuel_calculator::api::handle_command as fuel_handle;
 use crate::hub::HubCommand;
 use crate::post_race::api::handle_command as post_race_handle;
@@ -174,8 +174,9 @@ async fn handle_client(
 ) {
     let is_json = Arc::new(AtomicBool::new(false));
     let is_json_cb = is_json.clone();
-    let level_flag = Arc::new(AtomicU8::new(LEVEL_NONE));
-    let level_cb = level_flag.clone();
+    let caller_slot: Arc<Mutex<Option<Caller>>> = Arc::new(Mutex::new(None));
+    let caller_cb = caller_slot.clone();
+    let access_cb = access.clone();
     let wanted_team: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let wanted_team_cb = wanted_team.clone();
 
@@ -196,9 +197,12 @@ async fn handle_client(
             // Browsers cannot set headers on a WebSocket, so the token comes
             // as `?token=`. Loopback peers need none.
             let presented = req.uri().query().and_then(access::token_from_query);
-            match access.authorize(peer.ip(), presented) {
-                Some(Level::Local) => level_cb.store(LEVEL_LOCAL, Ordering::Relaxed),
-                Some(Level::Remote) => level_cb.store(LEVEL_REMOTE, Ordering::Relaxed),
+            match access_cb.authorize(peer.ip(), presented) {
+                Some(caller) => {
+                    if let Ok(mut c) = caller_cb.lock() {
+                        *c = Some(caller);
+                    }
+                }
                 None => {
                     let mut refusal = ErrorResponse::new(Some("invalid or missing token".into()));
                     *refusal.status_mut() = StatusCode::UNAUTHORIZED;
@@ -211,7 +215,7 @@ async fn handle_client(
         {
             Ok(ws) => ws,
             Err(e) => {
-                if level_flag.load(Ordering::Relaxed) == LEVEL_NONE {
+                if caller_slot.lock().map(|c| c.is_none()).unwrap_or(true) {
                     warn!("Refused WebSocket client {}: invalid or missing token", peer);
                 } else {
                     warn!("WebSocket handshake failed for {}: {}", peer, e);
@@ -219,19 +223,31 @@ async fn handle_client(
                 return;
             }
         };
-    let level = if level_flag.load(Ordering::Relaxed) == LEVEL_LOCAL {
-        Level::Local
+    let Some(mut caller) = caller_slot.lock().ok().and_then(|c| c.clone()) else { return };
+    let (mut sink, mut incoming) = ws.split();
+    let fmt = if is_json.load(Ordering::Relaxed) {
+        Format::Json
     } else {
-        Level::Remote
+        Format::MsgPack
     };
 
-    // The team this client watches: the one it asked for, or the first.
+    // The team this client watches: the one it asked for, or the first, among
+    // those it may see.
     let wanted = wanted_team.lock().ok().and_then(|t| t.clone());
     let team = {
-        let list = teams.read().map(|t| t.clone()).unwrap_or_default();
+        let list: Vec<Arc<TeamLink>> =
+            teams.read().map(|t| t.clone()).unwrap_or_default().into_iter().filter(|t| caller.sees_team(&t.id)).collect();
         match list.iter().find(|t| Some(&t.id) == wanted.as_ref()).or(list.first()) {
             Some(t) => t.clone(),
-            None => return,
+            None => {
+                warn!("Client {} ({}) has no team to watch", peer, caller.name);
+                let msg = ServerMessage::Refused { message: NO_TEAM.into() };
+                if let Ok(ws_msg) = serialize(&msg, fmt) {
+                    let _ = sink.send(ws_msg).await;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(1), sink.close()).await;
+                return;
+            }
         }
     };
     let mut rx = team.tx.subscribe();
@@ -239,14 +255,10 @@ async fn handle_client(
     let count = client_count.fetch_add(1, Ordering::Relaxed) + 1;
     let _ = count_tx.send(count);
 
-    let fmt = if is_json.load(Ordering::Relaxed) {
-        Format::Json
-    } else {
-        Format::MsgPack
-    };
-    info!("Client {} connected ({:?}, format: {:?}, team: {}, {} total)", peer, level, fmt, team.id, count);
-
-    let (mut sink, mut incoming) = ws.split();
+    info!(
+        "Client {} connected ({}, {}, format: {:?}, team: {}, {} total)",
+        peer, caller.name, caller.role.as_str(), fmt, team.id, count
+    );
 
     // The latest snapshots first, so the dashboard does not wait for the next
     // one: every car (until the next car crosses the line), the version check,
@@ -284,6 +296,19 @@ async fn handle_client(
                     info!("Client {}: team {} is gone, closing", peer, team.id);
                     break;
                 }
+                // Access taken away, or this team no longer shared with them:
+                // say so and close.
+                match access.recheck(&caller) {
+                    Some(now) if now.sees_team(&team.id) => caller = now,
+                    now => {
+                        info!("Client {} ({}): access to team {} removed, closing", peer, caller.name, team.id);
+                        let message = if now.is_some() { NO_TEAM } else { ACCESS_REMOVED };
+                        if let Ok(ws_msg) = serialize(&ServerMessage::Refused { message: message.into() }, fmt) {
+                            let _ = sink.send(ws_msg).await;
+                        }
+                        break;
+                    }
+                }
                 let server_time_ms = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -303,6 +328,7 @@ async fn handle_client(
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
+                        let msg = visible_to(&caller, msg);
                         match serialize(&msg, fmt) {
                             Ok(ws_msg) => {
                                 if let Err(e) = sink.send(ws_msg).await {
@@ -344,17 +370,27 @@ async fn handle_client(
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientCommand>(&text) {
                             Ok(cmd) => {
-                                // Commands that change the racing PC, or a hub's
-                                // teams and drivers, are for its own browser only.
-                                if level == Level::Remote && is_local_only(&cmd) {
-                                    warn!("Refused local-only command from remote client {}", peer);
-                                    let refusal = local_only_refusal(&cmd);
+                                // Who may send what is decided here, whatever
+                                // the dashboard shows (see `required_role`).
+                                let hub = access.is_hub();
+                                let needed = required_role(&cmd, hub);
+                                if caller.role < needed {
+                                    // A guest's dashboard saves the map it
+                                    // records on its own: nothing to tell them.
+                                    if matches!(cmd, ClientCommand::TrackOutlineSave { .. }) {
+                                        continue;
+                                    }
+                                    warn!("Refused {} from {} ({}, {})", command_name(&text), peer, caller.name, caller.role.as_str());
+                                    let refusal = refusal(&cmd, needed, hub);
                                     if let Ok(ws_msg) = serialize(&refusal, fmt) {
                                         if sink.send(ws_msg).await.is_err() {
                                             break;
                                         }
                                     }
                                     continue;
+                                }
+                                if changes_the_race(&cmd) {
+                                    info!("{} by {} ({})", command_name(&text), caller.name, peer);
                                 }
 
                                 if let ClientCommand::FollowCar { car_name } = cmd {
@@ -478,26 +514,83 @@ async fn handle_client(
 }
 
 // ---------------------------------------------------------------------------
-// Access levels
+// Permissions
 // ---------------------------------------------------------------------------
 
-const LEVEL_NONE: u8 = 0;
-const LEVEL_LOCAL: u8 = 1;
-const LEVEL_REMOTE: u8 = 2;
+const NO_TEAM: &str = "No team is shared with you on this hub yet: ask the hub's admin.";
+const ACCESS_REMOVED: &str = "Your access to this hub has been removed: ask the hub's admin for a new link.";
 
-/// Commands a remote client may not send: they delete files on the racing PC,
-/// make the bridge read a folder of the caller's choosing, or change which
-/// drivers and teams a hub follows (the hub's owner does that).
-fn is_local_only(cmd: &ClientCommand) -> bool {
+/// The least role that may send `cmd`.
+///
+/// | | Guest | Engineer | Admin (the PC itself) |
+/// |---|---|---|---|
+/// | Read: history, results, fuel calculator, map | ✓ | ✓ | ✓ |
+/// | Strategy and targets, pin a driver, ask the AI | | ✓ | ✓ |
+/// | AI settings and budget (hub) | | | ✓ |
+/// | Teams, drivers, people (hub) | | | ✓ |
+/// | Delete history or a track (map: hub only) | | | ✓ |
+/// | Read results from a folder of one's choice | | | ✓ |
+///
+/// On a driver's bridge there are no guests, and its token is an engineer's:
+/// what it could do before roles, it still can.
+fn required_role(cmd: &ClientCommand, hub: bool) -> Role {
     match cmd {
         ClientCommand::PostRaceInit { results_path } => {
-            results_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false)
+            if results_path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false) {
+                Role::Admin
+            } else {
+                Role::Guest
+            }
         }
         // Deleting a session destroys data on this PC.
-        ClientCommand::HistoryDelete { .. } => true,
-        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => true,
-        cmd if is_team_command(cmd) => true,
-        _ => false,
+        ClientCommand::HistoryDelete { .. } => Role::Admin,
+        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => Role::Admin,
+        cmd if is_team_command(cmd) => Role::Admin,
+        // The AI key and its spending belong to the hub's PC.
+        ClientCommand::AiConfig { .. } if hub => Role::Admin,
+        ClientCommand::TrackOutlineDelete { .. } if hub => Role::Admin,
+        ClientCommand::StrategyConfig { .. }
+        | ClientCommand::AiConfig { .. }
+        | ClientCommand::AiAsk { .. }
+        | ClientCommand::HubFollow { .. }
+        | ClientCommand::FollowCar { .. }
+        | ClientCommand::TrackOutlineSave { .. }
+        | ClientCommand::TrackOutlineDelete { .. } => Role::Engineer,
+        _ => Role::Guest,
+    }
+}
+
+/// Commands worth a line in the log, with who sent them.
+fn changes_the_race(cmd: &ClientCommand) -> bool {
+    matches!(
+        cmd,
+        ClientCommand::StrategyConfig { .. }
+            | ClientCommand::AiConfig { .. }
+            | ClientCommand::AiAsk { .. }
+            | ClientCommand::HubFollow { .. }
+    )
+}
+
+/// The `command` field of a command's JSON, for the log.
+fn command_name(text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("command").and_then(|c| c.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "command".into())
+}
+
+/// What a client of a team receives of `msg`: a guest's team list holds only
+/// the teams shared with them.
+fn visible_to(caller: &Caller, msg: Arc<ServerMessage>) -> Arc<ServerMessage> {
+    if caller.teams.is_none() {
+        return msg;
+    }
+    match &*msg {
+        ServerMessage::Teams { teams, current } => Arc::new(ServerMessage::Teams {
+            teams: teams.iter().filter(|t| caller.sees_team(&t.id)).cloned().collect(),
+            current: current.clone(),
+        }),
+        _ => msg,
     }
 }
 
@@ -512,16 +605,30 @@ fn is_team_command(cmd: &ClientCommand) -> bool {
     )
 }
 
-const HUB_ONLY: &str = "Teams and drivers are managed on the hub's PC (http://localhost there).";
+const HUB_ONLY: &str = "Only on the hub's PC (http://localhost there).";
+const RACING_PC_ONLY: &str = "This action is only available on the racing PC itself.";
+const GUEST: &str = "You can watch this team, not change it: ask the engineer.";
 
 /// The error a refused command gets back, in the family the sender listens to.
-fn local_only_refusal(cmd: &ClientCommand) -> ServerMessage {
-    let message = "This action is only available on the racing PC itself.".to_string();
+fn refusal(cmd: &ClientCommand, needed: Role, hub: bool) -> ServerMessage {
+    let message = match (needed, hub) {
+        (Role::Admin, true) => HUB_ONLY,
+        (Role::Admin, false) => RACING_PC_ONLY,
+        _ => GUEST,
+    }
+    .to_string();
     match cmd {
-        ClientCommand::HistoryDelete { .. } => ServerMessage::HistoryError { message },
-        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } => ServerMessage::HubError { message: HUB_ONLY.into() },
-        cmd if is_team_command(cmd) => ServerMessage::HubError { message: HUB_ONLY.into() },
-        _ => ServerMessage::PostRaceError { message },
+        ClientCommand::HistoryList
+        | ClientCommand::HistorySession { .. }
+        | ClientCommand::HistoryCarLaps { .. }
+        | ClientCommand::HistoryStrategy { .. }
+        | ClientCommand::HistoryDelete { .. } => ServerMessage::HistoryError { message },
+        ClientCommand::HubAddSource { .. } | ClientCommand::HubRemoveSource { .. } | ClientCommand::HubFollow { .. } => {
+            ServerMessage::HubError { message }
+        }
+        cmd if is_team_command(cmd) => ServerMessage::HubError { message },
+        ClientCommand::PostRaceInit { .. } => ServerMessage::PostRaceError { message },
+        _ => ServerMessage::Refused { message },
     }
 }
 
@@ -570,31 +677,86 @@ fn serialize(msg: &ServerMessage, fmt: Format) -> Result<Message> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn installs_and_custom_paths_are_local_only() {
-        assert!(is_local_only(&ClientCommand::PostRaceInit {
-            results_path: Some("C:\\Users".into())
-        }));
+    use crate::protocol::messages::TeamInfo;
+
+    fn need(cmd: ClientCommand) -> (Role, Role) {
+        (required_role(&cmd, false), required_role(&cmd, true))
     }
 
     #[test]
-    fn a_hubs_drivers_and_teams_are_managed_locally() {
-        assert!(is_local_only(&ClientCommand::HubAddSource { link: "x".into(), label: None }));
-        assert!(is_local_only(&ClientCommand::HubRemoveSource { id: "x".into() }));
-        assert!(is_local_only(&ClientCommand::HubMoveSource { source_id: "x".into(), team_id: "y".into() }));
-        assert!(is_local_only(&ClientCommand::TeamCreate { name: "Clienti".into(), color: None }));
-        assert!(is_local_only(&ClientCommand::TeamDelete { id: "x".into() }));
-        // Pinning a driver is the engineers' call, from anywhere.
-        assert!(!is_local_only(&ClientCommand::HubFollow { id: None }));
+    fn installs_and_custom_paths_are_for_the_pc_itself() {
+        let cmd = ClientCommand::PostRaceInit { results_path: Some("C:\\Users".into()) };
+        assert_eq!(need(cmd.clone()), (Role::Admin, Role::Admin));
+        assert!(matches!(refusal(&cmd, Role::Admin, false), ServerMessage::PostRaceError { .. }));
+        assert_eq!(need(ClientCommand::HistoryDelete { session_id: 1 }), (Role::Admin, Role::Admin));
+    }
+
+    #[test]
+    fn a_hubs_drivers_and_teams_are_managed_on_its_pc() {
+        for cmd in [
+            ClientCommand::HubAddSource { link: "x".into(), label: None },
+            ClientCommand::HubRemoveSource { id: "x".into() },
+            ClientCommand::HubMoveSource { source_id: "x".into(), team_id: "y".into() },
+            ClientCommand::TeamCreate { name: "Clienti".into(), color: None },
+            ClientCommand::TeamDelete { id: "x".into() },
+        ] {
+            assert_eq!(required_role(&cmd, true), Role::Admin, "{cmd:?}");
+            assert!(matches!(refusal(&cmd, Role::Admin, true), ServerMessage::HubError { .. }));
+        }
         assert_eq!(team_from_query("format=json&team=clienti&token=x").as_deref(), Some("clienti"));
         assert_eq!(team_from_query("token=x&team="), None);
     }
 
     #[test]
-    fn reading_data_stays_open_to_remote_clients() {
-        assert!(!is_local_only(&ClientCommand::PostRaceInit { results_path: None }));
-        assert!(!is_local_only(&ClientCommand::PostRaceInit { results_path: Some("  ".into()) }));
-        assert!(!is_local_only(&ClientCommand::PostRaceSessionDetail { session_id: 1 }));
-        assert!(!is_local_only(&ClientCommand::FuelCalcInit));
+    fn engineers_run_the_race_and_guests_only_watch() {
+        // Pinning a driver and asking the AI: the engineers' call, from anywhere.
+        for cmd in [ClientCommand::HubFollow { id: None }, ClientCommand::AiAsk { question: None }] {
+            assert_eq!(need(cmd.clone()), (Role::Engineer, Role::Engineer), "{cmd:?}");
+        }
+        let guest = refusal(&ClientCommand::AiAsk { question: None }, Role::Engineer, true);
+        assert!(matches!(guest, ServerMessage::Refused { message } if message == GUEST));
+        assert!(matches!(refusal(&ClientCommand::HubFollow { id: None }, Role::Engineer, true), ServerMessage::HubError { .. }));
+    }
+
+    #[test]
+    fn ai_settings_and_maps_belong_to_the_hubs_pc_but_not_to_a_drivers() {
+        let ai = ClientCommand::AiConfig { config: Default::default() };
+        let map = ClientCommand::TrackOutlineDelete { track: "Spa".into() };
+        // A driver's bridge: unchanged, its token may still do this.
+        assert_eq!(required_role(&ai, false), Role::Engineer);
+        assert_eq!(required_role(&map, false), Role::Engineer);
+        assert_eq!(required_role(&ai, true), Role::Admin);
+        assert_eq!(required_role(&map, true), Role::Admin);
+    }
+
+    #[test]
+    fn reading_data_stays_open_to_everyone() {
+        for cmd in [
+            ClientCommand::PostRaceInit { results_path: None },
+            ClientCommand::PostRaceInit { results_path: Some("  ".into()) },
+            ClientCommand::PostRaceSessionDetail { session_id: 1 },
+            ClientCommand::FuelCalcInit,
+            ClientCommand::HistoryList,
+            ClientCommand::HistorySession { session_id: 1 },
+            ClientCommand::TrackOutlineGet { track: "Spa".into() },
+        ] {
+            assert_eq!(need(cmd.clone()), (Role::Guest, Role::Guest), "{cmd:?}");
+        }
+    }
+
+    #[test]
+    fn a_guest_sees_only_their_teams_in_the_list() {
+        let team = |id: &str| TeamInfo { id: id.into(), name: id.into(), ..Default::default() };
+        let msg = Arc::new(ServerMessage::Teams { teams: vec![team("ufficiale"), team("clienti")], current: "clienti".into() });
+        let guest = Caller { role: Role::Guest, name: "G".into(), user_id: Some("g".into()), teams: Some(vec!["clienti".into()]) };
+        match &*visible_to(&guest, msg.clone()) {
+            ServerMessage::Teams { teams, current } => {
+                assert_eq!(teams.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["clienti"]);
+                assert_eq!(current, "clienti");
+            }
+            other => panic!("{other:?}"),
+        }
+        let engineer = Caller { role: Role::Engineer, name: "E".into(), user_id: None, teams: None };
+        assert!(Arc::ptr_eq(&visible_to(&engineer, msg.clone()), &msg));
     }
 }

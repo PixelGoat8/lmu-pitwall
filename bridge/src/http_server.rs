@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, info, warn};
 
-use crate::access::{self, Access, Level};
+use crate::access::{self, Access};
 use crate::assets::Asset;
 use crate::websocket::server::WebSocketServer;
 
@@ -126,7 +126,8 @@ async fn handle_http(
 
     // Who is asking. Static files and /api/version are served to anyone who
     // can reach the port; everything else needs a level (see `crate::access`).
-    let level = access.authorize(peer.ip(), access::token_from_request(&request_str));
+    let caller = access.authorize(peer.ip(), access::token_from_request(&request_str));
+    let is_local = caller.as_ref().map(|c| c.is_local()).unwrap_or(false);
     let api_cors = [
         ("Access-Control-Allow-Origin", "*"),
         ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
@@ -135,25 +136,32 @@ async fn handle_http(
     // API routes
 
     // Lets the dashboard tell "wrong token" apart from "bridge unreachable":
-    // a browser never sees why a WebSocket handshake was refused.
+    // a browser never sees why a WebSocket handshake was refused. Also says
+    // who the caller is, so the dashboard shows only the controls that work.
     if path == "/api/auth-check" {
-        return match level {
-            Some(l) => {
-                let body = format!(r#"{{"ok":true,"local":{}}}"#, l == Level::Local);
-                send_response(&mut stream, 200, "application/json", body.as_bytes(), &api_cors).await
+        return match &caller {
+            Some(c) => {
+                let body = serde_json::json!({
+                    "ok": true,
+                    "local": c.is_local(),
+                    "role": c.role,
+                    "name": c.name,
+                    "hub": access.is_hub(),
+                });
+                send_response(&mut stream, 200, "application/json", body.to_string().as_bytes(), &api_cors).await
             }
             None => send_unauthorized(&mut stream, &api_cors).await,
         };
     }
 
     if path == "/api/network-info" {
-        let Some(level) = level else {
+        if caller.is_none() {
             return send_unauthorized(&mut stream, &api_cors).await;
-        };
+        }
         let ip = get_local_ip().unwrap_or_else(|| "unknown".to_string());
         // Only the racing PC's own browser learns the token and the Tailscale
         // address: together they are the link the driver sends the engineer.
-        let body = if level == Level::Local {
+        let body = if is_local {
             serde_json::json!({
                 "ip": ip,
                 "port": port,
@@ -181,7 +189,7 @@ async fn handle_http(
     // Control endpoints change the racing PC, so they are for its own browser
     // only: loopback peer, and no foreign web page as the origin.
     let is_control = (path == "/api/shutdown" || path == "/api/set-port") && method == "POST";
-    if is_control && !(level == Some(Level::Local) && access::origin_is_local(&request_str)) {
+    if is_control && !(is_local && access::origin_is_local(&request_str)) {
         warn!("Refused {} from {} (control endpoints are local-only)", path, peer);
         send_response(
             &mut stream,

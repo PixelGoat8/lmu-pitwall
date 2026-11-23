@@ -28,6 +28,7 @@ mod shared_memory;
 mod strategy;
 mod team;
 mod tyres;
+mod users;
 mod websocket;
 
 use std::sync::Arc;
@@ -1224,7 +1225,9 @@ async fn main() -> Result<()> {
         .or_else(|| std::env::var(access::TOKEN_ENV).ok().filter(|t| !t.trim().is_empty()))
         .or_else(|| app_cfg.token.clone())
         .unwrap_or_else(access::generate_token);
-    let access = Arc::new(access::Access::new(token.trim().to_string()));
+    // A hub also knows its people, each with a link of their own.
+    let users = config.hub.then(|| Arc::new(users::UsersStore::open(&paths::root())));
+    let access = Arc::new(access::Access::new(token.trim().to_string(), users.clone()));
 
     info!("LMU Bridge v{}", env!("CARGO_PKG_VERSION"));
     info!("Remote clients need the access token; this PC's own browser does not");
@@ -1259,7 +1262,7 @@ async fn main() -> Result<()> {
         // Started before the server accepts anyone: a dashboard always finds
         // its team.
         let teams = hub::manager::start_teams(&store, &ws);
-        tokio::spawn(hub::manager::run(ws.clone(), store, teams, team_requests_rx, hub_busy_tx));
+        tokio::spawn(hub::manager::run(ws.clone(), store, users.clone(), teams, team_requests_rx, hub_busy_tx));
         // A hub has no game of its own (the idle shutdown watches hub_busy_rx).
         game_status_rx = watch::channel(None::<ServerMessage>).1;
     } else {

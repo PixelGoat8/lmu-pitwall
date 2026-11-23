@@ -488,6 +488,13 @@ pub enum ServerMessage {
         message: String,
     },
 
+    /// A command this client's role may not send (a guest changing the
+    /// strategy, an engineer changing the hub's AI settings), or access that
+    /// has just been taken away.
+    Refused {
+        message: String,
+    },
+
     /// A hub's teams, every second, on every team's stream. `current` is the
     /// team this client is watching.
     Teams {

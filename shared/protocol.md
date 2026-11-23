@@ -8,19 +8,35 @@
 
 ## Access
 
-The bridge sorts callers by where the TCP connection comes from:
+Every caller gets a role, from where the TCP connection comes from and the
+token it presents:
 
-| Caller | Token | May do |
+| Caller | Token | Role |
 |---|---|---|
-| **Local**: loopback (a browser on the racing PC) | not needed | everything |
-| **Remote**: any other address (LAN, Tailscale) | required | receive data, send read-only commands |
+| Loopback (a browser on the PC itself) | not needed | **admin** |
+| Any other address (LAN, Tailscale) | the bridge's or hub's token | **engineer** |
+| Any other address, hub only | a personal token from `users.json` | **engineer** or **guest**, as the entry says |
+
+| | Guest | Engineer | Admin |
+|---|---|---|---|
+| Receive data; history, results, fuel calculator, `track_outline_get` | ✓ | ✓ | ✓ |
+| `strategy_config`, `ai_ask`, `hub_follow`, `follow_car`, `track_outline_save` | | ✓ | ✓ |
+| `ai_config`, `track_outline_delete` | | bridge only | ✓ |
+| `hub_add_source`, `hub_remove_source`, `hub_move_source`, `team_*` | | | ✓ |
+| `history_delete`, `post_race_init` with a custom `results_path` | | | ✓ |
 
 - WebSocket: `ws://HOST:9000/?token=TOKEN`. Without a valid token the
   handshake is refused with HTTP 401.
 - HTTP API: `?token=TOKEN` or `Authorization: Bearer TOKEN`.
-- Local-only WebSocket commands: `history_delete`, and `post_race_init` with
-  a custom `results_path`. A remote client gets `HistoryError` or
-  `PostRaceError` back.
+- A refused command gets an error back in its family (`HistoryError`,
+  `HubError`, `PostRaceError`), otherwise **`Refused`** `{message}`. A guest's
+  `track_outline_save` is dropped silently (the dashboard sends it on its own).
+- A guest sees only the teams listed in their entry: `?team=` falls back to
+  the first of those, and `Teams` lists only them. With none, the client gets
+  `Refused` and is closed.
+- Access is checked again at every heartbeat: a person removed from
+  `users.json`, or a team no longer shared with them, gets `Refused` and is
+  closed.
 - The token is generated on first run and stored in
   `%APPDATA%\LMUPitwall\config.json`; `--token` and `LMU_PITWALL_TOKEN` override it.
 
@@ -30,7 +46,7 @@ The bridge sorts callers by where the TCP connection comes from:
 |---|---|---|
 | `GET /` and static assets | anyone | the dashboard |
 | `GET /api/version` | anyone | `{version}` |
-| `GET /api/auth-check` | anyone | 200 `{ok, local}` or 401. Lets a client tell a refused token from an unreachable bridge |
+| `GET /api/auth-check` | anyone | 200 `{ok, local, role, name, hub}` or 401. Lets a client tell a refused token from an unreachable bridge, and show only the controls its role may use |
 | `GET /api/network-info` | local or remote | `{ip, port, local}`; local callers also get `tailscale_ip` and `token` |
 | `POST /api/shutdown` | local, no foreign `Origin` | exits the bridge |
 | `POST /api/set-port` | local, no foreign `Origin` | saves the port and restarts |
@@ -285,6 +301,6 @@ Built from the stream by the bridge or hub the client is connected to.
 | `history_session { session_id }` | `HistorySession`: `session`, `laps[]`, `stints[]`, `events[]`, `ai[]`, `cars[]` (with best and average lap), `strategy_laps[]` |
 | `history_car_laps { session_id, car_ids[] }` | `HistoryCarLaps { session_id, laps[] }` (up to 8 cars) |
 | `history_strategy { session_id, lap }` | `HistoryStrategy { session_id, lap, json }` (a StrategyUpdate as JSON text) |
-| `history_delete { session_id }` | `HistorySessions`; local clients only |
+| `history_delete { session_id }` | `HistorySessions`; admin only |
 
 Errors come back as `HistoryError { message }`.
