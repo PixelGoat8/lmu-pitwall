@@ -11,7 +11,7 @@ import type {
   VersionInfo,
 } from '../types/telemetry'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
-import type { HubStatus, HubStintInfo, OnlineInfo, PersonInfo } from '../types/telemetry'
+import type { ChangeEntry, HubStatus, HubStintInfo, OnlineInfo, PersonInfo } from '../types/telemetry'
 import type { StrategyUpdate } from '../types/strategy'
 import type { RaceTiming } from '../types/race'
 import type { AiFeed } from '../types/ai'
@@ -136,6 +136,8 @@ interface TelemetryStore {
   hub: HubSection
   /** The latest refused command, shown for a few seconds. */
   refusal: { message: string; at: number } | null
+  /** Who changed what in the race, newest last; null until the bridge sends it. */
+  changes: ChangeEntry[] | null
   /** The hub's people and who is connected (Access panel). */
   access: { people: PersonInfo[] | null; online: OnlineInfo[]; error: string | null }
   // Latest plan from the bridge's strategy engine; null outside a session.
@@ -318,6 +320,7 @@ function freshData(): CarData {
     hub: { status: null, stints: [], error: null },
     refusal: null,
     access: { people: null, online: [], error: null },
+    changes: null,
     strategy: null,
     raceTiming: null,
     aiFeed: null,
@@ -608,6 +611,14 @@ export const useTelemetryStore = create<TelemetryStore>((set) => ({
 
       case 'Refused':
         set({ refusal: { message: msg.message, at: Date.now() } })
+        break
+
+      case 'ChangeLog':
+        set({ changes: msg.entries })
+        break
+
+      case 'ChangeLogEntry':
+        set((st) => (st.changes?.some((c) => c.seq === msg.entry.seq) ? {} : { changes: [...(st.changes ?? []), msg.entry] }))
         break
 
       case 'AccessList':

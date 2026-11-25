@@ -16,6 +16,7 @@ Per ogni sessione, dal primo momento in cui la nostra auto è in pista:
 | Gli eventi | come nel widget *Race events* |
 | Il piano di strategia | com'era a ogni giro |
 | I commenti AI | compresi quelli trattenuti e il loro costo |
+| Le modifiche | chi ha cambiato strategia, target, Pin o AI, e quando (come nel widget *Changes*) |
 
 Una sessione compare nell'elenco dopo il primo giro completato.
 
@@ -33,7 +34,8 @@ commenti AI scritti durante le prove non finiscono nella sessione dopo.
 - **Tempi sul giro:** la nostra auto e fino a 3 rivali a scelta, giro per giro.
   I giri ai box e in neutralizzazione non sono disegnati; i giri molto lenti
   (testacoda, traffico) vengono tagliati in alto per non schiacciare il resto.
-- **Eventi** e **commenti AI** della sessione.
+- **Eventi**, **modifiche** (chi ha cambiato cosa, con ora e giro) e
+  **commenti AI** della sessione.
 - **Delete:** cancella una sessione. Funziona solo dal PC che l'ha registrata.
 
 ## Dove sono i dati

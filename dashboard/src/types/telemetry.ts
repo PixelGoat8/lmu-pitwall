@@ -388,6 +388,26 @@ export interface AccessErrorMsg {
   message: string
 }
 
+/** A line of the team's change log. */
+export interface ChangeEntry {
+  seq: number
+  at: number                 // Unix seconds
+  session_time: number | null
+  lap: number | null
+  who: string
+  text: string
+}
+
+export interface ChangeLogMsg {
+  type: 'ChangeLog'
+  entries: ChangeEntry[]
+}
+
+export interface ChangeLogEntryMsg {
+  type: 'ChangeLogEntry'
+  entry: ChangeEntry
+}
+
 /** A command this page's access may not send, or access just taken away. */
 export interface Refused {
   type: 'Refused'
@@ -421,6 +441,8 @@ export type ServerMessage =
   | HubError
   | Refused
   | AccessListMsg
+  | ChangeLogMsg
+  | ChangeLogEntryMsg
   | AccessErrorMsg
   | TeamsMsg
   | StrategyUpdate

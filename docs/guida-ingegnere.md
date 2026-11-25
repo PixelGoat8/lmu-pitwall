@@ -94,6 +94,14 @@ salvate in `%APPDATA%\LMUPitwall\users.json`; il file si può anche modificare
 a mano (`{"name": "Marco", "role": "engineer"}` basta: l'hub aggiunge il
 token da solo), e un ruolo scritto male vale come ospite.
 
+### Chi ha cambiato cosa
+
+Con due ingegneri sulla stessa auto, il widget **Changes** (*+ Add widget*)
+dice chi ha cambiato cosa e quando: *"21:14 L52 Marco: VE target 3.2 %/lap"*.
+Ci finiscono impostazioni e target della strategia, Pin, domande all'AI e
+impostazioni dell'AI, una riga per squadra. Le stesse righe restano nello
+storico della sessione (🗂).
+
 ## Emergenza: senza i Pitwall dei piloti
 
 Se il Pitwall di un pilota non funziona, ma l'ingegnere ha LMU ed è nella

@@ -53,6 +53,15 @@ export interface EventRow {
   text: string | null
 }
 
+/** A line of the change log: who changed the strategy, targets, pin or AI. */
+export interface ChangeRow {
+  at: number                 // Unix seconds
+  session_time: number | null
+  lap: number | null
+  who: string
+  text: string
+}
+
 export interface AiRow {
   lap: number | null
   trigger: string | null
@@ -80,6 +89,7 @@ export interface SessionDetail {
   stints: StintRow[]
   events: EventRow[]
   ai: AiRow[]
+  changes?: ChangeRow[]      // absent from bridges older than the change log
   cars: CarSummary[]
   strategy_laps: number[]
 }
