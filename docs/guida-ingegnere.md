@@ -55,31 +55,27 @@ spostato.
 
 ## Il secondo ingegnere e gli ospiti
 
-Al secondo ingegnere bastano Tailscale e un browser: non installa niente.
+A un altro ingegnere, o a un pilota che vuole guardare, bastano Tailscale e un
+browser: non installa niente. Ognuno ha **il suo link**, così sai chi è
+collegato e puoi togliere l'accesso a una persona sola.
 
 1. Su [login.tailscale.com/admin/machines](https://login.tailscale.com/admin/machines),
    accanto al PC dell'hub premi **⋯** → **Share…** e mandagli l'invito.
-2. Nella pagina dell'hub premi **🔗** e mandagli il link *Over Tailscale*.
-   Aggiungendo `&team=clienti` in fondo, il link apre direttamente quella
-   squadra.
-
-Chi apre questo link è un **ingegnere**: guida la gara (strategia, target,
-Pin, domande all'AI) per entrambe le squadre, ma **non** gestisce squadre e
-piloti e non cambia le impostazioni dell'AI. Quelle restano sul PC dell'hub.
-
-### Un link per persona
-
-Meglio dare a ognuno **il suo link**: si sa chi è collegato e si può togliere
-l'accesso a una persona sola. Sul PC dell'hub premi **👥** (*Access*):
-
-1. Scrivi il nome, scegli **Engineer** o **Guest** (per un ospite spunta le
-   squadre che può guardare) e premi **Add**.
-2. Sotto il suo nome c'è il suo link: **Copy** e mandaglielo.
+2. Sul PC dell'hub premi **👥** (*Access*). Scrivi il nome, scegli il ruolo e
+   premi **Add**:
+   - **Engineer** per il secondo ingegnere;
+   - **Guest** per un pilota che guarda: spunta la sua squadra.
+3. Sotto il nome c'è il suo link: **Copy** e mandaglielo. Aggiungendo
+   `&team=clienti` in fondo, il link apre direttamente quella squadra.
 
 Dallo stesso pannello cambi ruolo e squadre, dai un link nuovo (**New link**:
 quello vecchio smette subito di funzionare) o togli l'accesso (**Remove**: la
 persona viene scollegata subito). In fondo, **Connected now** dice chi è
 collegato, su quale squadra, da dove e da quanto.
+
+Cosa può fare ognuno (l'hub lo controlla da sé: un comando non permesso viene
+rifiutato con un messaggio, e la dashboard nasconde i pulsanti che non
+funzionerebbero):
 
 | | Ospite (`guest`) | Ingegnere (`engineer`) | PC dell'hub |
 |---|---|---|---|
@@ -89,7 +85,10 @@ collegato, su quale squadra, da dove e da quanto.
 | Squadre, piloti, persone | | | ✓ |
 | Cancellare storico e tracciati | | | ✓ |
 
-Il link dell'hub (🔗) resta valido come accesso da ingegnere. Le persone sono
+Il link dell'hub (🔗) vale come accesso da ingegnere: va bene per il tuo
+tablet, ma non darlo in giro, perché non si può togliere a una persona sola
+(per cambiarlo, cambia il token in `%APPDATA%\LMUPitwall\config.json` e
+riavvia). Le persone sono
 salvate in `%APPDATA%\LMUPitwall\users.json`; il file si può anche modificare
 a mano (`{"name": "Marco", "role": "engineer"}` basta: l'hub aggiunge il
 token da solo), e un ruolo scritto male vale come ospite.
