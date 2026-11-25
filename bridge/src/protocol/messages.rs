@@ -506,6 +506,17 @@ pub enum ServerMessage {
         message: String,
     },
 
+    /// The team's change log, newest last: on every change and every few
+    /// seconds.
+    ChangeLog {
+        entries: Vec<crate::changelog::ChangeEntry>,
+    },
+
+    /// One new line of the change log (what the session history stores).
+    ChangeLogEntry {
+        entry: crate::changelog::ChangeEntry,
+    },
+
     /// A hub's teams, every second, on every team's stream. `current` is the
     /// team this client is watching.
     Teams {

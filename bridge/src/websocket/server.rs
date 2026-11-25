@@ -434,7 +434,7 @@ async fn handle_client(
                                 // Strategy settings: the team's engine answers
                                 // with a fresh StrategyUpdate to its clients.
                                 if let ClientCommand::StrategyConfig { config } = cmd {
-                                    let _ = team.strategy_tx.send(config);
+                                    let _ = team.strategy_tx.send((config, caller.name.clone()));
                                     continue;
                                 }
                                 // AI: settings and "ask now". Remote clients hold
@@ -442,10 +442,15 @@ async fn handle_client(
                                 // spending stay on the PC that runs this.
                                 match cmd {
                                     ClientCommand::AiConfig { config } => {
-                                        let _ = team.ai_tx.send(crate::ai::AiCommand::Config(config));
+                                        let _ = team.ai_tx.send(crate::ai::AiCommand::Config(config, caller.name.clone()));
                                         continue;
                                     }
                                     ClientCommand::AiAsk { question } => {
+                                        let text = match question.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+                                            Some(q) => format!("asked the AI: \u{201c}{}\u{201d}", q.chars().take(120).collect::<String>()),
+                                            None => "asked the AI for a comment".to_string(),
+                                        };
+                                        let _ = team.notes_tx.send(crate::changelog::Note::new(&caller.name, text));
                                         let _ = team.ai_tx.send(crate::ai::AiCommand::Ask(question));
                                         continue;
                                     }
@@ -458,7 +463,7 @@ async fn handle_client(
                                 let not_a_hub = || ServerMessage::HubError {
                                     message: "This Pitwall is not running as a hub (start it with --hub).".into(),
                                 };
-                                if let Some(hub_cmd) = HubCommand::from_client(&cmd) {
+                                if let Some(hub_cmd) = HubCommand::from_client(&cmd, &caller.name) {
                                     match &team.hub_tx {
                                         Some(tx) => {
                                             let _ = tx.send(hub_cmd);

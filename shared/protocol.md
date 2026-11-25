@@ -47,6 +47,19 @@ token it presents:
   `access_update {id, name?, role?, teams?}`, `access_regenerate {id}`,
   `access_remove {id}`. `role` is `engineer` or `guest`; unknown teams are
   dropped.
+
+### Change log
+
+Per team: who changed the strategy settings or targets, the pinned PC, the AI
+settings, or asked the AI, as the access names them (a person, "hub link",
+"hub PC").
+
+- **`ChangeLog`** `{entries[]}`: the latest 200, every 3 s and on every change.
+- **`ChangeLogEntry`** `{entry}`: each new line once (the history stores it).
+- An entry: `seq`, `at` (Unix seconds), `session_time` and `lap` (null outside
+  a session), `who`, `text` (e.g. `VE target 3.2 %/lap`).
+- `HistorySession` carries the session's lines as `changes[]` (`at`,
+  `session_time`, `lap`, `who`, `text`).
 - The token is generated on first run and stored in
   `%APPDATA%\LMUPitwall\config.json`; `--token` and `LMU_PITWALL_TOKEN` override it.
 

@@ -40,6 +40,7 @@ fn start_team(cfg: &TeamConfig, store: &Arc<TeamsStore>, ws: &WebSocketServer) -
     let (summary_tx, summary_rx) = watch::channel(TeamSummary::default());
     let team = HubTeam {
         id: cfg.id.clone(),
+        notes: link.notes_tx.clone(),
         sources: cfg.sources.clone(),
         follow: cfg.follow.clone(),
         store: store.clone(),

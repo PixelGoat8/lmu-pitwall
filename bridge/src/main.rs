@@ -5,6 +5,7 @@ mod access;
 mod ai;
 mod app_config;
 mod assets;
+mod changelog;
 mod config;
 mod electronics;
 mod follow;

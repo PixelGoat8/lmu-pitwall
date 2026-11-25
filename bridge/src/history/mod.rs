@@ -10,7 +10,8 @@
 //!   PC that was driving, the same trust rule as the strategy engine);
 //! * every car's lap times, to compare rivals afterwards;
 //! * our stints, built with the hub's stint rules;
-//! * the race events, the strategy plan at each lap and the AI comments.
+//! * the race events, the strategy plan at each lap and the AI comments;
+//! * the change log: who changed the strategy, targets, pin or AI, and when.
 //!
 //! A session starts when our car first appears in a live session and ends at
 //! a session change; one without a completed lap is not listed.
@@ -54,6 +55,7 @@ pub enum Op {
     Events { first_seq: usize, events: Vec<crate::race::RaceEvent> },
     Strategy { lap: i64, json: String },
     Ai(crate::ai::AiComment),
+    Change(crate::changelog::ChangeEntry),
     Touch { track: String },
 }
 
@@ -100,6 +102,12 @@ impl Recorder {
                 }
                 return Vec::new();
             }
+            // Changes made outside a recorded session (practice, menus) are
+            // not part of any.
+            ServerMessage::ChangeLogEntry { entry } => {
+                return if self.open { vec![Op::Change(entry.clone())] } else { Vec::new() };
+            }
+            ServerMessage::ChangeLog { .. } => return Vec::new(),
             ServerMessage::AiFeed(f) => {
                 // Comments seen while nothing was recorded (practice, menus)
                 // count as handled, so they never land in the next session.
@@ -301,6 +309,7 @@ pub fn apply(conn: &mut Connection, sid: &mut Option<i64>, ops: Vec<Op>) -> anyh
                     Op::Events { first_seq, events } => store::insert_events(conn, id, first_seq, &events)?,
                     Op::Strategy { lap, json } => store::insert_strategy(conn, id, lap, &json)?,
                     Op::Ai(c) => store::insert_ai(conn, id, &c)?,
+                    Op::Change(c) => store::insert_change(conn, id, &c)?,
                     Op::Touch { track } => store::touch_session(conn, id, now_unix(), &track)?,
                     Op::NewSession { .. } => unreachable!(),
                 }
@@ -445,6 +454,12 @@ mod tests {
         feed(&mut rec, &mut conn, &mut sid, ServerMessage::RaceTiming(Box::new(crate::race::RaceTiming { events: events.clone(), laps: vec![] })));
         // The same events again: nothing duplicated.
         feed(&mut rec, &mut conn, &mut sid, ServerMessage::RaceTiming(Box::new(crate::race::RaceTiming { events, laps: vec![] })));
+        let change = |seq: u64, text: &str| ServerMessage::ChangeLogEntry {
+            entry: crate::changelog::ChangeEntry { seq, at: 1000, session_time: Some(250.0), lap: Some(2), who: "Marco".into(), text: text.into() },
+        };
+        feed(&mut rec, &mut conn, &mut sid, change(1, "VE target 3.2 %/lap"));
+        // The periodic full list adds nothing.
+        feed(&mut rec, &mut conn, &mut sid, ServerMessage::ChangeLog { entries: vec![] });
 
         let list = store::list_sessions(&conn, 10).unwrap();
         assert_eq!(list.len(), 1);
@@ -459,6 +474,8 @@ mod tests {
         assert_eq!(d.laps[0].class_position, Some(2));
         assert_eq!(d.laps[0].ve, Some(0.8));
         assert_eq!(d.events.len(), 1);
+        assert_eq!(d.changes.len(), 1);
+        assert_eq!((d.changes[0].who.as_str(), d.changes[0].text.as_str(), d.changes[0].lap), ("Marco", "VE target 3.2 %/lap", Some(2)));
         assert_eq!(d.stints.len(), 1);
         assert_eq!(d.stints[0].driver.as_deref(), Some("Alice"));
         assert_eq!(d.stints[0].source.as_deref(), Some("Alice PC"));

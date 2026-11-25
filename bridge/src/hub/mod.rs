@@ -135,17 +135,18 @@ pub enum HubCommand {
     /// A bridge moved here from another team, link and all.
     AddConfigured(SourceConfig),
     RemoveSource { id: String },
-    Follow { id: Option<String> },
+    /// Pin a bridge (`None`: follow the driver), and who asked.
+    Follow { id: Option<String>, who: String },
 }
 
 impl HubCommand {
-    pub fn from_client(cmd: &ClientCommand) -> Option<Self> {
+    pub fn from_client(cmd: &ClientCommand, who: &str) -> Option<Self> {
         match cmd {
             ClientCommand::HubAddSource { link, label } => {
                 Some(HubCommand::AddSource { link: link.clone(), label: label.clone() })
             }
             ClientCommand::HubRemoveSource { id } => Some(HubCommand::RemoveSource { id: id.clone() }),
-            ClientCommand::HubFollow { id } => Some(HubCommand::Follow { id: id.clone() }),
+            ClientCommand::HubFollow { id } => Some(HubCommand::Follow { id: id.clone(), who: who.to_string() }),
             _ => None,
         }
     }
@@ -308,6 +309,8 @@ pub struct TeamSummary {
 /// snapshots its clients start from.
 pub struct HubTeam {
     pub id: String,
+    /// The team's change log (pins go there).
+    pub notes: crate::changelog::Notes,
     pub sources: Vec<SourceConfig>,
     pub follow: Option<String>,
     pub store: Arc<teams::TeamsStore>,
@@ -317,6 +320,7 @@ pub struct HubTeam {
 
 struct Hub {
     team_id: String,
+    notes: crate::changelog::Notes,
     store: Arc<teams::TeamsStore>,
     tx: tokio::sync::broadcast::Sender<Arc<ServerMessage>>,
     summary_tx: watch::Sender<TeamSummary>,
@@ -643,8 +647,16 @@ impl Hub {
                     self.reselect();
                 }
             }
-            HubCommand::Follow { id } => {
-                self.pinned = id.filter(|i| self.sources.iter().any(|s| &s.cfg.id == i));
+            HubCommand::Follow { id, who } => {
+                let pinned = id.filter(|i| self.sources.iter().any(|s| &s.cfg.id == i));
+                if pinned != self.pinned {
+                    let text = match pinned.as_ref().and_then(|i| self.sources.iter().find(|s| &s.cfg.id == i)) {
+                        Some(s) => format!("pinned {}", s.cfg.label),
+                        None => "back to following the driver".to_string(),
+                    };
+                    let _ = self.notes.send(crate::changelog::Note::new(&who, text));
+                }
+                self.pinned = pinned;
                 self.save();
                 self.reselect();
             }
@@ -665,6 +677,7 @@ pub async fn run(team: HubTeam, mut commands: mpsc::UnboundedReceiver<HubCommand
     let (events_tx, mut events) = mpsc::unbounded_channel();
     let mut hub = Hub {
         team_id: team.id.clone(),
+        notes: team.notes,
         store: team.store,
         tx: team.feed.tx,
         summary_tx: team.summary_tx,

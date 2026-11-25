@@ -266,7 +266,8 @@ pub struct AiFeed {
 /// From a dashboard: change the settings, or ask now (optionally a question).
 #[derive(Debug, Clone)]
 pub enum AiCommand {
-    Config(AiConfig),
+    /// New settings, with who sent them (for the change log).
+    Config(AiConfig, String),
     Ask(Option<String>),
 }
 
@@ -812,6 +813,7 @@ pub async fn run(
     mut rx: broadcast::Receiver<Arc<ServerMessage>>,
     tx: broadcast::Sender<Arc<ServerMessage>>,
     mut commands: mpsc::UnboundedReceiver<AiCommand>,
+    notes: crate::changelog::Notes,
     dir: PathBuf,
 ) {
     let key = std::env::var(KEY_ENV).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
@@ -885,8 +887,12 @@ pub async fn run(
                 Err(broadcast::error::RecvError::Closed) => return,
             },
             Some(cmd) = commands.recv() => match cmd {
-                AiCommand::Config(c) => {
-                    ai.cfg = c.sanitized();
+                AiCommand::Config(c, who) => {
+                    let c = c.sanitized();
+                    for text in crate::changelog::describe_ai(&ai.cfg, &c) {
+                        let _ = notes.send(crate::changelog::Note::new(&who, text));
+                    }
+                    ai.cfg = c;
                     save(&dir, "ai.json", &ai.cfg);
                     ai.last_error = None;
                     send(&ai);
