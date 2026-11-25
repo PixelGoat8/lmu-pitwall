@@ -341,6 +341,8 @@ export interface TeamInfo {
   driving: boolean           // that PC is driving the car
   car_name: string           // empty until a PC in a session is followed
   driver: string
+  /** False for a team a guest may not watch: there only to mark its car. */
+  watchable?: boolean
 }
 
 /** The hub's teams, every second. `current` is the one this page watches. */
@@ -352,6 +354,63 @@ export interface TeamsMsg {
 
 export interface HubError {
   type: 'HubError'
+  message: string
+}
+
+/** A person with a personal link to a hub (Access panel, hub PC only). */
+export interface PersonInfo {
+  id: string
+  name: string
+  role: 'engineer' | 'guest'
+  teams: string[]          // what a guest may watch
+  token: string
+  created: number          // Unix seconds
+}
+
+/** A dashboard connected to the hub right now. */
+export interface OnlineInfo {
+  name: string             // a person, "hub link" or "hub PC"
+  role: 'admin' | 'engineer' | 'guest'
+  user_id: string | null
+  team: string
+  address: string
+  connected_s: number
+}
+
+export interface AccessListMsg {
+  type: 'AccessList'
+  people: PersonInfo[]
+  online: OnlineInfo[]
+}
+
+export interface AccessErrorMsg {
+  type: 'AccessError'
+  message: string
+}
+
+/** A line of the team's change log. */
+export interface ChangeEntry {
+  seq: number
+  at: number                 // Unix seconds
+  session_time: number | null
+  lap: number | null
+  who: string
+  text: string
+}
+
+export interface ChangeLogMsg {
+  type: 'ChangeLog'
+  entries: ChangeEntry[]
+}
+
+export interface ChangeLogEntryMsg {
+  type: 'ChangeLogEntry'
+  entry: ChangeEntry
+}
+
+/** A command this page's access may not send, or access just taken away. */
+export interface Refused {
+  type: 'Refused'
   message: string
 }
 
@@ -380,6 +439,11 @@ export type ServerMessage =
   | HubStatus
   | HubStints
   | HubError
+  | Refused
+  | AccessListMsg
+  | ChangeLogMsg
+  | ChangeLogEntryMsg
+  | AccessErrorMsg
   | TeamsMsg
   | StrategyUpdate
   | PitInfoMsg

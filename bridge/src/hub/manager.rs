@@ -40,6 +40,7 @@ fn start_team(cfg: &TeamConfig, store: &Arc<TeamsStore>, ws: &WebSocketServer) -
     let (summary_tx, summary_rx) = watch::channel(TeamSummary::default());
     let team = HubTeam {
         id: cfg.id.clone(),
+        notes: link.notes_tx.clone(),
         sources: cfg.sources.clone(),
         follow: cfg.follow.clone(),
         store: store.clone(),
@@ -68,6 +69,7 @@ fn team_list(store: &TeamsStore, running: &HashMap<String, Running>) -> Vec<Team
                 driving: s.driving,
                 car_name: s.car_name,
                 driver: s.driver,
+                watchable: true,
             }
         })
         .collect()
@@ -92,6 +94,7 @@ pub fn start_teams(store: &Arc<TeamsStore>, ws: &WebSocketServer) -> Teams {
 pub async fn run(
     ws: Arc<WebSocketServer>,
     store: Arc<TeamsStore>,
+    users: Option<Arc<crate::users::UsersStore>>,
     teams: Teams,
     mut requests: mpsc::UnboundedReceiver<(String, ClientCommand)>,
     busy_tx: watch::Sender<bool>,
@@ -114,10 +117,16 @@ pub async fn run(
                     if let Some(r) = running.get(&from) {
                         let _ = r.link.tx.send(Arc::new(ServerMessage::HubError { message: format!("{e}.") }));
                     }
+                } else if let (ClientCommand::TeamDelete { id }, Some(users)) = (&cmd, &users) {
+                    // A deleted team is no longer shared with anyone.
+                    users.forget_team(id);
                 }
                 send_list(&running);
             }
             _ = tick.tick() => {
+                if let Some(users) = &users {
+                    users.refresh();
+                }
                 send_list(&running);
                 let busy = running.values().any(|r| r.summary_rx.borrow().busy);
                 busy_tx.send_if_modified(|b| {

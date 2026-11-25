@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { bridgeApiUrl } from '../utils/bridge'
+import { useAccess } from './useAccess'
 
 /**
  * Is this page open on the bridge's (or hub's) own PC? Some actions are only
@@ -7,14 +6,5 @@ import { bridgeApiUrl } from '../utils/bridge'
  * controls are shown only where they work. False until the bridge has answered.
  */
 export function useIsLocal(): boolean {
-  const [local, setLocal] = useState(false)
-  useEffect(() => {
-    let alive = true
-    fetch(bridgeApiUrl('/api/auth-check'))
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d: { local?: boolean } | null) => { if (alive) setLocal(!!d?.local) })
-      .catch(() => {})
-    return () => { alive = false }
-  }, [])
-  return local
+  return useAccess().local
 }

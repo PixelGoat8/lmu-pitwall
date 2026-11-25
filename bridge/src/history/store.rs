@@ -70,6 +70,10 @@ CREATE TABLE IF NOT EXISTS h_strategy (
     json       TEXT NOT NULL,
     PRIMARY KEY (session_id, lap)
 );
+CREATE TABLE IF NOT EXISTS h_changes (
+    session_id INTEGER NOT NULL REFERENCES h_sessions(id) ON DELETE CASCADE,
+    at INTEGER NOT NULL, session_time REAL, lap INTEGER, who TEXT, text TEXT
+);
 CREATE TABLE IF NOT EXISTS h_ai (
     session_id INTEGER NOT NULL REFERENCES h_sessions(id) ON DELETE CASCADE,
     comment_id INTEGER NOT NULL,
@@ -226,6 +230,14 @@ pub fn insert_ai(conn: &Connection, sid: i64, c: &crate::ai::AiComment) -> Resul
     Ok(())
 }
 
+pub fn insert_change(conn: &Connection, sid: i64, c: &crate::changelog::ChangeEntry) -> Result<()> {
+    conn.execute(
+        "INSERT INTO h_changes (session_id, at, session_time, lap, who, text) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![sid, c.at, c.session_time, c.lap, c.who, c.text],
+    )?;
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -287,6 +299,16 @@ pub struct EventRow {
     pub text: Option<String>,
 }
 
+/// A line of the change log.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChangeRow {
+    pub at: i64,
+    pub session_time: Option<f64>,
+    pub lap: Option<i64>,
+    pub who: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AiRow {
     pub lap: Option<i64>,
@@ -319,6 +341,8 @@ pub struct SessionDetail {
     pub stints: Vec<StintRow>,
     pub events: Vec<EventRow>,
     pub ai: Vec<AiRow>,
+    /// Who changed the strategy, targets, pin or AI, and when.
+    pub changes: Vec<ChangeRow>,
     pub cars: Vec<CarSummary>,
     /// Laps with a strategy snapshot (fetch one with `history_strategy`).
     pub strategy_laps: Vec<i64>,
@@ -418,11 +442,23 @@ pub fn session_detail(conn: &Connection, id: i64) -> Result<Option<SessionDetail
             })
         })?
         .collect::<rusqlite::Result<_>>()?;
+    let changes = conn
+        .prepare("SELECT at, session_time, lap, who, text FROM h_changes WHERE session_id = ?1 ORDER BY rowid")?
+        .query_map([id], |r| {
+            Ok(ChangeRow {
+                at: r.get(0)?,
+                session_time: r.get(1)?,
+                lap: r.get(2)?,
+                who: r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                text: r.get::<_, Option<String>>(4)?.unwrap_or_default(),
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
     let strategy_laps = conn
         .prepare("SELECT lap FROM h_strategy WHERE session_id = ?1 ORDER BY lap")?
         .query_map([id], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    Ok(Some(SessionDetail { session, laps, stints, events, ai, cars, strategy_laps }))
+    Ok(Some(SessionDetail { session, laps, stints, events, ai, changes, cars, strategy_laps }))
 }
 
 pub fn car_laps(conn: &Connection, sid: i64, car_ids: &[i64]) -> Result<Vec<CarLapRow>> {
@@ -440,7 +476,7 @@ pub fn strategy_at(conn: &Connection, sid: i64, lap: i64) -> Result<Option<Strin
 }
 
 pub fn delete_session(conn: &Connection, sid: i64) -> Result<()> {
-    for t in ["h_laps", "h_car_laps", "h_stints", "h_events", "h_strategy", "h_ai"] {
+    for t in ["h_laps", "h_car_laps", "h_stints", "h_events", "h_strategy", "h_ai", "h_changes"] {
         conn.execute(&format!("DELETE FROM {t} WHERE session_id = ?1"), [sid])?;
     }
     conn.execute("DELETE FROM h_sessions WHERE id = ?1", [sid])?;

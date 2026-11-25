@@ -100,6 +100,7 @@ function Detail({ d }: { d: SessionDetail }) {
       <LapChart d={d} />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 18 }}>
         <Events d={d} />
+        <Changes d={d} />
         <AiComments d={d} />
       </div>
     </div>
@@ -260,6 +261,24 @@ function Events({ d }: { d: SessionDetail }) {
         {d.events.length === 0 ? <span style={muted}>None.</span> : d.events.map((e, i) => (
           <span key={i} style={{ fontFamily: fonts.body, fontSize: 13, color: e.severity === 'alert' ? colors.danger : e.severity === 'warn' ? colors.accent : colors.text, borderLeft: `3px solid ${e.own ? colors.primary : 'transparent'}`, paddingLeft: 6 }}>
             <span style={{ fontFamily: fonts.mono, color: colors.textMuted }}>L{e.lap ?? '?'} </span>{e.text}
+          </span>
+        ))}
+      </div>
+    </Section>
+  )
+}
+
+function Changes({ d }: { d: SessionDetail }) {
+  const changes = d.changes ?? []
+  return (
+    <Section title={`Changes (${changes.length})`}>
+      <div style={{ maxHeight: 280, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {changes.length === 0 ? <span style={muted}>None.</span> : changes.map((c, i) => (
+          <span key={i} style={{ fontFamily: fonts.body, fontSize: 13, color: colors.text }}>
+            <span style={{ fontFamily: fonts.mono, color: colors.textMuted }}>
+              {new Date(c.at * 1000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} L{c.lap ?? '?'}{' '}
+            </span>
+            <b>{c.who}</b>: {c.text}
           </span>
         ))}
       </div>

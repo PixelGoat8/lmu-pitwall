@@ -488,6 +488,35 @@ pub enum ServerMessage {
         message: String,
     },
 
+    /// A command this client's role may not send (a guest changing the
+    /// strategy, an engineer changing the hub's AI settings), or access that
+    /// has just been taken away.
+    Refused {
+        message: String,
+    },
+
+    /// A hub's people and who is connected now, for the Access panel (the
+    /// hub's own PC only: it carries the personal tokens).
+    AccessList {
+        people: Vec<PersonInfo>,
+        online: Vec<OnlineInfo>,
+    },
+
+    AccessError {
+        message: String,
+    },
+
+    /// The team's change log, newest last: on every change and every few
+    /// seconds.
+    ChangeLog {
+        entries: Vec<crate::changelog::ChangeEntry>,
+    },
+
+    /// One new line of the change log (what the session history stores).
+    ChangeLogEntry {
+        entry: crate::changelog::ChangeEntry,
+    },
+
     /// A hub's teams, every second, on every team's stream. `current` is the
     /// team this client is watching.
     Teams {
@@ -502,6 +531,37 @@ pub enum ServerMessage {
     /// bridge version that knows message types this one does not.
     #[serde(untagged)]
     Raw(rmpv::Value),
+}
+
+/// A person with a personal link to a hub.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonInfo {
+    pub id: String,
+    pub name: String,
+    /// "engineer" or "guest".
+    pub role: String,
+    /// Teams a guest may watch.
+    pub teams: Vec<String>,
+    /// For the link the admin copies.
+    pub token: String,
+    /// When the person was added (Unix seconds).
+    pub created: u64,
+}
+
+/// A dashboard connected right now.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OnlineInfo {
+    /// A person's name, "hub link" or "hub PC".
+    pub name: String,
+    pub role: String,
+    /// The person in users.json; `None` for the hub link and the hub PC.
+    pub user_id: Option<String>,
+    /// The team the dashboard is watching.
+    pub team: String,
+    /// IP address it connects from.
+    pub address: String,
+    /// Seconds since it connected.
+    pub connected_s: u64,
 }
 
 /// One team of a hub, as the team switcher and the sister-car marks need it.
@@ -520,6 +580,15 @@ pub struct TeamInfo {
     /// is in it; empty until a bridge in a session is followed.
     pub car_name: String,
     pub driver: String,
+    /// This client may watch the team. A guest also gets the teams it may
+    /// not watch, reduced to name, colour and car, so the sister car is still
+    /// marked; the switcher leaves them out.
+    #[serde(default = "watchable_default")]
+    pub watchable: bool,
+}
+
+fn watchable_default() -> bool {
+    true
 }
 
 /// One bridge as a hub sees it.
@@ -828,6 +897,31 @@ pub enum ClientCommand {
     },
     /// Only a team without drivers, and never the last one.
     TeamDelete { id: String },
+
+    // -----------------------------------------------------------------------
+    // People of a hub (its own PC only); each answered with AccessList
+    // -----------------------------------------------------------------------
+    AccessList,
+    /// `role`: "engineer" or "guest"; `teams`: what a guest may watch.
+    AccessAdd {
+        name: String,
+        role: String,
+        #[serde(default)]
+        teams: Vec<String>,
+    },
+    AccessUpdate {
+        id: String,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        role: Option<String>,
+        #[serde(default)]
+        teams: Option<Vec<String>>,
+    },
+    /// A new link for the person: the old one stops working at once.
+    AccessRegenerate { id: String },
+    /// Take the person's access away, disconnecting them at once.
+    AccessRemove { id: String },
 
     // -----------------------------------------------------------------------
     // Fuel Calculator commands

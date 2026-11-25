@@ -841,7 +841,8 @@ impl Engine {
 pub async fn run(
     mut rx: broadcast::Receiver<Arc<ServerMessage>>,
     tx: broadcast::Sender<Arc<ServerMessage>>,
-    mut config_rx: mpsc::UnboundedReceiver<StrategyConfig>,
+    mut config_rx: mpsc::UnboundedReceiver<(StrategyConfig, String)>,
+    notes: crate::changelog::Notes,
     dir: PathBuf,
 ) {
     let initial_loss = shared_pit_loss().lock().map(|s| s.clone()).unwrap_or_default();
@@ -858,7 +859,11 @@ pub async fn run(
             r = rx.recv() => match r {
                 Ok(msg) => {
                     let value = match &*msg {
-                        ServerMessage::StrategyUpdate(_) | ServerMessage::RaceTiming(_) | ServerMessage::AiFeed(_) => continue,
+                        ServerMessage::StrategyUpdate(_)
+                        | ServerMessage::RaceTiming(_)
+                        | ServerMessage::AiFeed(_)
+                        | ServerMessage::ChangeLog { .. }
+                        | ServerMessage::ChangeLogEntry { .. } => continue,
                         other => match crate::recording::to_raw(other) {
                             Some(v) => v,
                             None => continue,
@@ -881,8 +886,12 @@ pub async fn run(
                 Err(broadcast::error::RecvError::Lagged(k)) => warn!("Strategy engine fell behind by {} messages", k),
                 Err(broadcast::error::RecvError::Closed) => return,
             },
-            Some(cfg) = config_rx.recv() => {
-                engine.cfg = cfg.sanitized();
+            Some((cfg, who)) = config_rx.recv() => {
+                let cfg = cfg.sanitized();
+                for text in crate::changelog::describe_strategy(&engine.cfg, &cfg) {
+                    let _ = notes.send(crate::changelog::Note::new(&who, text));
+                }
+                engine.cfg = cfg;
                 save_json(&dir, "strategy.json", &engine.cfg);
                 send(&engine);
             }

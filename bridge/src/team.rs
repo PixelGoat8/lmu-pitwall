@@ -32,8 +32,11 @@ pub struct TeamLink {
     pub connection_status_rx: watch::Receiver<Option<ServerMessage>>,
     /// The team's hub coordinator; `None` on a driver's bridge.
     pub hub_tx: Option<mpsc::UnboundedSender<HubCommand>>,
-    pub strategy_tx: mpsc::UnboundedSender<crate::strategy::StrategyConfig>,
+    /// New strategy settings, with who sent them (for the change log).
+    pub strategy_tx: mpsc::UnboundedSender<(crate::strategy::StrategyConfig, String)>,
     pub ai_tx: mpsc::UnboundedSender<crate::ai::AiCommand>,
+    /// Lines for the team's change log.
+    pub notes_tx: crate::changelog::Notes,
 }
 
 /// What the team's live source (the game reader, a replay, or the hub's
@@ -68,16 +71,19 @@ pub fn start(
     let (connection_status_tx, connection_status_rx) = watch::channel(Some(no_game()));
     let (strategy_tx, strategy_rx) = mpsc::unbounded_channel();
     let (ai_tx, ai_rx) = mpsc::unbounded_channel();
+    let (notes_tx, notes_rx) = mpsc::unbounded_channel();
 
     let tasks = vec![
         // The plan, from this team's stream, back into it.
-        tokio::spawn(crate::strategy::run(tx.subscribe(), tx.clone(), strategy_rx, dir.clone())),
+        tokio::spawn(crate::strategy::run(tx.subscribe(), tx.clone(), strategy_rx, notes_tx.clone(), dir.clone())),
         // Race events and lap history.
         tokio::spawn(crate::race::run(tx.subscribe(), tx.clone())),
         // Session history in the team's database.
         tokio::spawn(crate::history::run(tx.subscribe(), dir.clone())),
         // AI comments (off unless enabled and ANTHROPIC_API_KEY is set).
-        tokio::spawn(crate::ai::run(tx.subscribe(), tx.clone(), ai_rx, dir.clone())),
+        tokio::spawn(crate::ai::run(tx.subscribe(), tx.clone(), ai_rx, notes_tx.clone(), dir.clone())),
+        // Who changed what, for the dashboards and the history.
+        tokio::spawn(crate::changelog::run(tx.subscribe(), tx.clone(), notes_rx)),
     ];
 
     let link = Arc::new(TeamLink {
@@ -89,6 +95,7 @@ pub fn start(
         hub_tx,
         strategy_tx,
         ai_tx,
+        notes_tx,
     });
     (link, TeamFeed { tx, all_drivers_tx, connection_status_tx }, tasks)
 }

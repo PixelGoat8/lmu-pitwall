@@ -7,6 +7,7 @@ import { WIDGET_REGISTRY } from './widgetRegistry'
 import { colors, fonts } from '../styles/theme'
 import { bridgeApiUrl } from '../utils/bridge'
 import { sendBridgeCommand } from '../hooks/useWebSocket'
+import { useAccess } from '../hooks/useAccess'
 import { isFullscreen, keepAwakeActive, setKeepAwake, toggleFullscreen as toggleFs } from '../utils/device'
 
 interface NetworkInfo {
@@ -104,7 +105,7 @@ function NetworkBadge() {
   )
 }
 
-function LinkRow({ label, url }: { label: string; url: string }) {
+export function LinkRow({ label, url }: { label: string; url: string }) {
   const [copied, setCopied] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -236,10 +237,12 @@ function FollowPicker() {
  * Switching keeps the page and the layout; only the car on screen changes.
  */
 function TeamSwitcher() {
-  const teams = useTeamStore((s) => s.teams)
+  const all = useTeamStore((s) => s.teams)
   const current = useTeamStore((s) => s.current)
   const asked = useTeamStore((s) => s.team)
   const setTeam = useTeamStore((s) => s.setTeam)
+  // A guest also hears of teams it may not watch (for the sister-car marks).
+  const teams = all.filter((t) => t.watchable !== false)
   if (teams.length < 2) return null
   const on = current ?? asked
   return (
@@ -348,9 +351,11 @@ function ConnectionBadge() {
   )
 }
 
-export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onOpenHistory, historyOpen, resultsOpen, fuelOpen }: {
+export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onOpenHistory, historyOpen, resultsOpen, fuelOpen, onOpenAccess, accessOpen }: {
   onOpenHistory: () => void
   historyOpen: boolean
+  onOpenAccess: () => void
+  accessOpen: boolean
   onOpenSettings: () => void
   onOpenResults: () => void
   onOpenFuel: () => void
@@ -358,6 +363,8 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
   fuelOpen: boolean
 }) {
   const { activePreset, locked, setPreset, resetToDefault, toggleLock, addWidget } = useLayoutStore()
+  // People are managed on the hub's own PC only.
+  const access = useAccess()
   const fullscreen = useSettingsStore((s) => s.fullscreen)
   // With several teams, the toolbar's edge wears the colour of the one on screen.
   const teamColor = useTeamStore((s) => (s.teams.length > 1 ? s.teams.find((t) => t.id === s.current)?.color : undefined))
@@ -470,6 +477,11 @@ export default function Toolbar({ onOpenSettings, onOpenResults, onOpenFuel, onO
 
       {/* Session history: stints, lap times, events, AI comments */}
       <ToolbarBtn onClick={onOpenHistory} title="Session history" active={historyOpen}>🗂</ToolbarBtn>
+
+      {/* People with access to the hub */}
+      {access.hub && access.local ? (
+        <ToolbarBtn onClick={onOpenAccess} title="Access: who may connect to the hub" active={accessOpen}>👥</ToolbarBtn>
+      ) : null}
 
       {/* Post Race Results */}
       <ToolbarBtn onClick={onOpenResults} title="Post Race Results" active={resultsOpen}>📋</ToolbarBtn>

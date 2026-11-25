@@ -4,6 +4,7 @@ import { sendBridgeCommand } from '../../hooks/useWebSocket'
 import { colors, fonts } from '../../styles/theme'
 import { fmtLap } from '../../utils/lapFormat'
 import type { EnergyPlan, StrategyConfig, StrategyUpdate, WhatIf } from '../../types/strategy'
+import { useAccess } from '../../hooks/useAccess'
 
 // Every figure on this widget comes from the bridge's strategy engine; the
 // widget only formats. Missing data shows as "—" and the engine's notes say why.
@@ -42,6 +43,8 @@ function Trend({ v, unit, risingIsBad = true }: { v: number | null; unit: string
 export default function StrategyWidget() {
   const s = useTelemetryStore((st) => st.strategy)
   const [showSettings, setShowSettings] = useState(false)
+  // Settings and targets are the engineers'; a guest sees the plan only.
+  const { canChange } = useAccess()
 
   if (!s) {
     return (
@@ -53,8 +56,8 @@ export default function StrategyWidget() {
 
   return (
     <div style={frame}>
-      <Header s={s} onSettings={() => setShowSettings((o) => !o)} settingsOpen={showSettings} />
-      {showSettings ? <Settings cfg={s.config} /> : null}
+      <Header s={s} onSettings={canChange ? () => setShowSettings((o) => !o) : null} settingsOpen={showSettings} />
+      {showSettings && canChange ? <Settings cfg={s.config} /> : null}
       <Energy s={s} />
       <Plan s={s} />
       {s.what_if.length > 0 ? <WhatIfTable rows={s.what_if} s={s} /> : null}
@@ -71,7 +74,7 @@ export default function StrategyWidget() {
 
 // ---------------------------------------------------------------------------
 
-function Header({ s, onSettings, settingsOpen }: { s: StrategyUpdate; onSettings: () => void; settingsOpen: boolean }) {
+function Header({ s, onSettings, settingsOpen }: { s: StrategyUpdate; onSettings: (() => void) | null; settingsOpen: boolean }) {
   const h = s.horizon
   return (
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -84,7 +87,7 @@ function Header({ s, onSettings, settingsOpen }: { s: StrategyUpdate; onSettings
         {s.stint.elapsed_s !== null ? ` · stint ${fmtDuration(s.stint.elapsed_s)}${s.stint.limit_s ? ` / ${fmtDuration(s.stint.limit_s)}` : ''}` : ''}
       </span>
       <span style={{ flex: 1 }} />
-      <button onClick={onSettings} style={smallButton(settingsOpen)} title="Strategy settings">⚙ settings</button>
+      {onSettings ? <button onClick={onSettings} style={smallButton(settingsOpen)} title="Strategy settings">⚙ settings</button> : null}
     </div>
   )
 }
@@ -169,6 +172,7 @@ function TargetLine({ e, t, kind, cfg, lapsCompleted }: { e: EnergyPlan; t: Ener
   // per-lap target is the one in force.
   const [mode, setMode] = useState<'laps' | 'per lap'>(t && t.box_lap === null ? 'per lap' : 'laps')
   const [draft, setDraft] = useState('')
+  const { canChange } = useAccess()
   const send = (boxLap: number | null, perLap: number | null) => {
     const config: StrategyConfig = kind === 've'
       ? { ...cfg, ve_target_box_lap: boxLap, ve_target_per_lap: perLap }
@@ -195,7 +199,7 @@ function TargetLine({ e, t, kind, cfg, lapsCompleted }: { e: EnergyPlan; t: Ener
     : t ? (pct ? (t.per_lap * 100).toFixed(2) : t.per_lap.toFixed(2)) : pct ? '%/lap' : 'L/lap'
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+      {canChange ? <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <span style={line}>target</span>
         <button onClick={() => { setMode('laps'); setDraft('') }} style={smallButton(mode === 'laps')} title="Make it last to the end of a lap">laps</button>
         <button onClick={() => { setMode('per lap'); setDraft('') }} style={smallButton(mode === 'per lap')} title="A consumption per lap">{pct ? '%/lap' : 'L/lap'}</button>
@@ -213,7 +217,7 @@ function TargetLine({ e, t, kind, cfg, lapsCompleted }: { e: EnergyPlan; t: Ener
         <span style={line}>{mode === 'laps' ? '' : unitText}</span>
         <button onClick={set} disabled={draft.trim() === ''} style={{ ...smallButton(draft.trim() !== ''), opacity: draft.trim() === '' ? 0.5 : 1 }}>Set</button>
         {t ? <button onClick={() => send(null, null)} style={smallButton(false)}>Clear</button> : null}
-      </span>
+      </span> : null}
       {t ? (
         <>
           {t.box_lap !== null ? (
